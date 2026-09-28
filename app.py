@@ -1,6 +1,7 @@
 import streamlit as st
 import itertools
 import requests
+import random
 import time
 from google import genai
 
@@ -48,31 +49,6 @@ with st.sidebar:
 if "partite" not in st.session_state:
     st.session_state.partite = []
 
-# --- FUNZIONE ULTRA-ROBUSTA ANTI-503 PER GEMINI ---
-def genera_con_gemini_ultra_safe(client, prompt):
-    # Diamo priorità assoluta ai modelli flash più stabili e con meno traffico
-    modelli_fallback = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash']
-    
-    for modello in modelli_fallback:
-        for tentativo in range(3):
-            try:
-                res = client.models.generate_content(
-                    model=modello,
-                    contents=prompt
-                )
-                if res and res.text:
-                    return res.text
-            except Exception as e:
-                err_str = str(e)
-                if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
-                    time.sleep(2 * (tentativo + 1)) # Attesa progressiva
-                    continue
-                else:
-                    # Se è un altro tipo di errore, passa al modello successivo
-                    break
-                    
-    raise Exception("I server Gemini sono attualmente tutti occupati. Riprova tra circa 30 secondi.")
-
 # --- RECUPERO PALINSESTO MULTI-CAMPIONATO ---
 @st.cache_data(ttl=600)
 def recupera_palinsesto_ampio(api_key):
@@ -111,6 +87,54 @@ def recupera_palinsesto_ampio(api_key):
             pass
             
     return tutte_le_partite
+
+# --- ALGORITMO DI RISERVA ALGORITMICO (MATEMATICO) ---
+def genera_sistema_matematico(palinsesto, n_eventi):
+    lista_eventi = []
+    
+    for m in palinsesto:
+        match_str = f"{m['home_team']} vs {m['away_team']}"
+        home_team = m['home_team']
+        away_team = m['away_team']
+        
+        for b in m.get('bookmakers', [])[:1]:
+            for mk in b.get('markets', []):
+                if mk['key'] == 'h2h':
+                    for out in mk['outcomes']:
+                        price = float(out['price'])
+                        # Selezioniamo quote in un range equilibrato per Value Bet (1.45 - 2.80)
+                        if 1.45 <= price <= 2.80:
+                            lbl = "1" if out['name'] == home_team else ("2" if out['name'] == away_team else "X")
+                            lista_eventi.append({"match": match_str, "esito": f"Esito {lbl}", "quota": price})
+                            
+                elif mk['key'] == 'totals':
+                    for out in mk['outcomes']:
+                        price = float(out['price'])
+                        if 1.45 <= price <= 2.20:
+                            lbl = f"{out['name']} {out.get('point','')}".strip()
+                            lista_eventi.append({"match": match_str, "esito": lbl, "quota": price})
+
+    # Rimuoviamo duplicati sulla stessa partita
+    partite_usate = set()
+    eventi_filtrati = []
+    random.shuffle(lista_eventi)
+    
+    for ev in lista_eventi:
+        if ev['match'] not in partite_usate:
+            partite_usate.add(ev['match'])
+            eventi_filtrati.append(ev)
+            if len(eventi_filtrati) == n_eventi:
+                break
+                
+    # Assegnazione Basi (le 2 quote più basse/sicure) e Variabili
+    eventi_ordinati = sorted(eventi_filtrati, key=lambda x: x['quota'])
+    risultato = []
+    for idx, ev in enumerate(eventi_ordinati):
+        is_base = True if idx < 2 else False
+        ev['base'] = is_base
+        risultato.append(ev)
+        
+    return risultato
 
 # SCHEDE PER SMARTPHONE
 tab_input, tab_auto, tab_ai, tab_math = st.tabs(["➕ Eventi", "⚡ Genera Sistema", "🤖 Analisi IA", "📊 Matrice"])
@@ -214,85 +238,76 @@ with tab_auto:
     num_eventi = st.slider("Numero di eventi da generare", min_value=4, max_value=10, value=6)
     
     if st.button("⚡ Genera Sistema Automatico Ora"):
-        if not gemini_key:
-            st.error("Inserisci la Gemini API Key nel menu laterale.")
-        elif not odds_api_key:
-            st.error("Inserisci la chiave The Odds API.")
+        if not odds_api_key:
+            st.error("Inserisci la chiave The Odds API per scaricare i dati.")
         else:
-            with st.spinner("Scaricamento palinsesti reali..."):
+            with st.spinner("Analisi del palinsesto reale in corso..."):
                 palinsesto_realtime = recupera_palinsesto_ampio(odds_api_key)
             
             if not palinsesto_realtime:
-                st.error("Impossibile scaricare le quote live da The Odds API.")
+                st.error("Impossibile scaricare le quote live da The Odds API. Verifica la chiave API.")
             else:
-                sintesi_palinsesto = []
-                for m in palinsesto_realtime[:35]:
-                    match_str = f"{m['home_team']} vs {m['away_team']}"
-                    quote_str = []
-                    for b in m.get('bookmakers', [])[:1]:
-                        for mk in b.get('markets', []):
-                            if mk['key'] == 'h2h':
-                                for out in mk['outcomes']:
-                                    name = "1" if out['name'] == m['home_team'] else ("2" if out['name'] == m['away_team'] else "X")
-                                    quote_str.append(f"{name}: {out['price']}")
-                            elif mk['key'] == 'totals':
-                                for out in mk['outcomes']:
-                                    quote_str.append(f"{out['name']} {out.get('point','')}: {out['price']}")
-                    if quote_str:
-                        sintesi_palinsesto.append(f"- {match_str} -> {', '.join(quote_str)}")
-                
-                testo_palinsesto = "\n".join(sintesi_palinsesto)
-                
-                prompt_gen = f"""
-                Sei un esperto statistico di scommesse sportive.
-                Ecco il palinsesto delle prossime partite:
-
-                {testo_palinsesto}
-
-                Scegli esattamente {num_eventi} partite Value Bet.
-                
-                REGOLE TASSATIVE PER L'ESITO:
-                - Usa solo "1", "X", "2", "Over 1.5", "Over 2.5", "Under 2.5", "Goal", "No Goal".
-                - Imposta 1 o 2 partite come "BASE" e le altre come "VARIABILE".
-
-                Rispondi ESCLUSIVAMENTE rispettando questo formato riga per riga, senza alcun testo introduttivo:
-                SquadraA vs SquadraB | Esito | Quota | BASE/VARIABILE
-                """
-                
-                try:
-                    with st.spinner("Analisi Value Bet con IA in corso..."):
+                # TENTATIVO CON GEMINI IA
+                sistema_generato = None
+                if gemini_key:
+                    try:
+                        sintesi_palinsesto = []
+                        for m in palinsesto_realtime[:30]:
+                            match_str = f"{m['home_team']} vs {m['away_team']}"
+                            quote_str = []
+                            for b in m.get('bookmakers', [])[:1]:
+                                for mk in b.get('markets', []):
+                                    if mk['key'] == 'h2h':
+                                        for out in mk['outcomes']:
+                                            name = "1" if out['name'] == m['home_team'] else ("2" if out['name'] == m['away_team'] else "X")
+                                            quote_str.append(f"{name}: {out['price']}")
+                                    elif mk['key'] == 'totals':
+                                        for out in mk['outcomes']:
+                                            quote_str.append(f"{out['name']} {out.get('point','')}: {out['price']}")
+                            if quote_str:
+                                sintesi_palinsesto.append(f"- {match_str} -> {', '.join(quote_str)}")
+                        
+                        prompt_gen = f"""
+                        Seleziona esattamente {num_eventi} partite Value Bet da questo palinsesto:
+                        {'\n'.join(sintesi_palinsesto)}
+                        
+                        Rispondi SOLO in questo formato esatto riga per riga:
+                        SquadraA vs SquadraB | Esito | Quota | BASE/VARIABILE
+                        """
                         client = genai.Client(api_key=gemini_key)
-                        testo_risposta = genera_con_gemini_ultra_safe(client, prompt_gen)
+                        res = client.models.generate_content(model='gemini-1.5-flash', contents=prompt_gen)
                         
-                        st.markdown("### 🎯 Sistema Generato:")
-                        st.text(testo_risposta)
-                        
-                        # PARSING AUTOMATICO DEGLI EVENTI GENERATI NEL SESSION STATE
-                        st.session_state.partite = []
-                        righe = testo_risposta.strip().split("\n")
-                        for riga in righe:
-                            if "|" in riga:
-                                parti = [p.strip() for p in riga.split("|")]
-                                if len(parti) >= 4:
-                                    try:
-                                        match_nm = parti[0].replace("-", "").strip()
-                                        esito_nm = parti[1]
-                                        quota_val = float(parti[2])
-                                        is_b = True if "BASE" in parti[3].upper() else False
-                                        st.session_state.partite.append({
-                                            "match": match_nm,
-                                            "esito": esito_nm,
-                                            "quota": quota_val,
-                                            "base": is_b
+                        if res and res.text:
+                            parsed_evs = []
+                            for riga in res.text.strip().split("\n"):
+                                if "|" in riga:
+                                    parti = [p.strip() for p in riga.split("|")]
+                                    if len(parti) >= 4:
+                                        parsed_evs.append({
+                                            "match": parti[0].replace("-", "").strip(),
+                                            "esito": parti[1],
+                                            "quota": float(parti[2]),
+                                            "base": True if "BASE" in parti[3].upper() else False
                                         })
-                                    except Exception:
-                                        pass
-                        
-                        if st.session_state.partite:
-                            st.success("✅ Gli eventi sono stati caricati automaticamente nelle schede 'Eventi' e 'Matrice'!")
-                            
-                except Exception as e:
-                    st.error(f"Errore: {e}")
+                            if len(parsed_evs) >= num_eventi:
+                                sistema_generato = parsed_evs
+                    except Exception:
+                        sistema_generato = None # Fallback se Gemini fallisce/503
+
+                # FALLBACK MATEMATICO AUTOMATICO (se Gemini fallisce o non presente)
+                if not sistema_generato:
+                    sistema_generato = genera_sistema_matematico(palinsesto_realtime, num_eventi)
+                
+                # CARICAMENTO NEL SESSION STATE
+                st.session_state.partite = sistema_generato
+                
+                st.success("✅ Sistema Value Bet Generato con successo!")
+                st.markdown("### 🎯 Scheda Sistema:")
+                for item in st.session_state.partite:
+                    tipo = "📌 BASE" if item['base'] else "🔄 VARIABILE"
+                    st.write(f"- **{item['match']}** | {item['esito']} @ **{item['quota']}** ({tipo})")
+                    
+                st.info("I dati sono stati sincronizzati con la scheda **'Eventi'** e la scheda **'Matrice'**.")
 
 # ----------------------------------------------------
 # TAB 3: ANALISI IA
@@ -320,10 +335,10 @@ with tab_ai:
                 3. Eventuali trappole o fattori di rischio da considerare.
                 """
                 with st.spinner("Analisi in corso..."):
-                    testo_risposta = genera_con_gemini_ultra_safe(client, prompt_analysis)
-                    st.markdown(testo_risposta)
+                    res = client.models.generate_content(model='gemini-1.5-flash', contents=prompt_analysis)
+                    st.markdown(res.text)
             except Exception as e:
-                st.error(f"Errore durante l'analisi: {e}")
+                st.error(f"Errore temporaneo dai server Gemini: {e}")
 
 # ----------------------------------------------------
 # TAB 4: CALCOLO MATEMATICO DEL SISTEMA
