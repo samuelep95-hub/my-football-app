@@ -2,6 +2,7 @@ import streamlit as st
 import itertools
 import requests
 import random
+from datetime import datetime, timezone, timedelta
 from google import genai
 
 # --- CONFIGURAZIONE PAGINA MOBILE ---
@@ -70,7 +71,7 @@ def recupera_palinsesto_stabile(api_key):
     except Exception:
         pass
 
-    # 2. Scarico specifico per i principali campionati europei (per trovare match fino a 2 settimane)
+    # 2. Scarico specifico per i principali campionati europei
     leghe = [
         "soccer_italy_serie_a",
         "soccer_epl",
@@ -88,7 +89,6 @@ def recupera_palinsesto_stabile(api_key):
         except Exception:
             continue
             
-    # Rimozione duplicati basata sull'id evento
     visti = set()
     risultato_unico = []
     for m in tutte:
@@ -100,6 +100,42 @@ def recupera_palinsesto_stabile(api_key):
             risultato_unico.append(m)
             
     return risultato_unico
+
+# --- FILTRO TEMPORALE MATCH ---
+def filtra_per_orizzonte_temporale(palinsesto, opzione_tempo):
+    ora_attuale = datetime.now(timezone.utc)
+    palinsesto_filtrato = []
+
+    for m in palinsesto:
+        commence_str = m.get('commence_time')
+        if not commence_str:
+            palinsesto_filtrato.append(m)
+            continue
+            
+        try:
+            commence_time = datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
+        except Exception:
+            palinsesto_filtrato.append(m)
+            continue
+
+        differenza = commence_time - ora_attuale
+
+        if opzione_tempo == "Solo oggi":
+            if commence_time.date() == ora_attuale.date():
+                palinsesto_filtrato.append(m)
+        elif opzione_tempo == "Oggi e domani":
+            if commence_time.date() <= (ora_attuale + timedelta(days=1)).date():
+                palinsesto_filtrato.append(m)
+        elif opzione_tempo == "Entro 3 giorni":
+            if differenza <= timedelta(days=3):
+                palinsesto_filtrato.append(m)
+        elif opzione_tempo == "Lungo termine (entro 12-14 giorni)":
+            if differenza <= timedelta(days=14):
+                palinsesto_filtrato.append(m)
+        else:
+            palinsesto_filtrato.append(m)
+
+    return palinsesto_filtrato
 
 # --- DERIVAZIONE COMPLETA ESITI SCOMMESSE ---
 def estrai_mercati_completi(match_data):
@@ -139,7 +175,6 @@ def estrai_mercati_completi(match_data):
                             q_under25 = price
                             opzioni["Under 2.5"] = price
 
-    # DERIVAZIONE DOPPIA CHANCE
     if q1 and qx:
         opzioni["Doppia Chance 1X"] = round(1 / ((1/q1) + (1/qx)), 2)
     if qx and q2:
@@ -147,7 +182,6 @@ def estrai_mercati_completi(match_data):
     if q1 and q2:
         opzioni["Doppia Chance 12"] = round(1 / ((1/q1) + (1/q2)), 2)
 
-    # DERIVAZIONE GOAL / NO GOAL
     if q_over25 and q_under25:
         opzioni["Goal"] = round(max(1.25, q_over25 * 0.93), 2)
         opzioni["No Goal"] = round(max(1.25, q_under25 * 0.95), 2)
@@ -289,10 +323,18 @@ with tab_input:
             st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: MULTIPLA DIRETTA
+# TAB 2: MULTIPLA DIRETTA CON FILTRO TEMPORALE
 # ----------------------------------------------------
 with tab_multipla:
     st.subheader("🎯 Generazione Multipla Ad Alta Affidabilità")
+    
+    orizzonte_mult = st.selectbox(
+        "📅 Seleziona lasso di tempo per i match (Multipla):",
+        ["Solo oggi", "Oggi e domani", "Entro 3 giorni", "Lungo termine (entro 12-14 giorni)"],
+        index=1,
+        key="time_mult"
+    )
+    
     n_eventi_mult = st.slider("Numero di eventi nella Multipla", min_value=2, max_value=8, value=4)
     importo_scommessa = st.number_input("Importo della giocata (€)", min_value=1.0, value=10.0, step=1.0)
     
@@ -300,14 +342,15 @@ with tab_multipla:
         if not odds_api_key:
             st.error("Inserisci la chiave The Odds API.")
         else:
-            with st.spinner("Caricamento palinsesto live..."):
+            with st.spinner("Caricamento e filtraggio palinsesto live..."):
                 palinsesto_realtime = recupera_palinsesto_stabile(odds_api_key)
+                palinsesto_filtrato = filtra_per_orizzonte_temporale(palinsesto_realtime, orizzonte_mult)
             
-            if not palinsesto_realtime:
-                st.error("Impossibile caricare il palinsesto. Verifica la tua API Key.")
+            if not palinsesto_filtrato:
+                st.error("Nessun match disponibile per l'intervallo temporale selezionato.")
             else:
                 candidati = []
-                for m in palinsesto_realtime:
+                for m in palinsesto_filtrato:
                     match_str = f"{m['home_team']} vs {m['away_team']}"
                     opzioni = estrai_mercati_completi(m)
                     if opzioni:
@@ -345,26 +388,35 @@ with tab_multipla:
                     st.metric("Quota Totale Multipla", f"{quota_totale:.2f}")
                     st.metric("Vincita Potenziale", f"{vincita_potenziale:.2f} €")
                 else:
-                    st.warning("Nessuna partita idonea trovata nel palinsesto in questo momento.")
+                    st.warning("Nessuna partita idonea trovata nell'intervallo temporale scelto.")
 
 # ----------------------------------------------------
-# TAB 3: GENERATORE SISTEMI
+# TAB 3: GENERATORE SISTEMI CON FILTRO TEMPORALE
 # ----------------------------------------------------
 with tab_auto:
     st.subheader("Generazione Automatica Sistema Value Bet")
+    
+    orizzonte_sis = st.selectbox(
+        "📅 Seleziona lasso di tempo per i match (Sistema):",
+        ["Solo oggi", "Oggi e domani", "Entro 3 giorni", "Lungo termine (entro 12-14 giorni)"],
+        index=3,
+        key="time_sis"
+    )
+    
     num_eventi = st.slider("Numero di eventi da generare", min_value=4, max_value=10, value=6)
     
     if st.button("⚡ Genera Sistema Automatico Ora"):
         if not odds_api_key:
             st.error("Inserisci la chiave The Odds API.")
         else:
-            with st.spinner("Caricamento palinsesto live..."):
+            with st.spinner("Caricamento e filtraggio palinsesto live..."):
                 palinsesto_realtime = recupera_palinsesto_stabile(odds_api_key)
+                palinsesto_filtrato = filtra_per_orizzonte_temporale(palinsesto_realtime, orizzonte_sis)
             
-            if not palinsesto_realtime:
-                st.error("Impossibile scaricare le quote live da The Odds API.")
+            if not palinsesto_filtrato:
+                st.error("Nessun match disponibile per l'intervallo temporale selezionato.")
             else:
-                sistema_generato = genera_sistema_matematico(palinsesto_realtime, num_eventi)
+                sistema_generato = genera_sistema_matematico(palinsesto_filtrato, num_eventi)
                 st.session_state.partite = sistema_generato
                 st.success("✅ Sistema Generato con successo!")
                 for item in st.session_state.partite:
@@ -372,7 +424,7 @@ with tab_auto:
                     st.write(f"- **{item['match']}** | {item['esito']} @ **{item['quota']}** ({tipo})")
 
 # ----------------------------------------------------
-# TAB 4: ANALISI IA (FIXED MODEL ENDPOINT)
+# TAB 4: ANALISI IA
 # ----------------------------------------------------
 with tab_ai:
     st.subheader("Analisi Statistica IA")
@@ -386,7 +438,6 @@ with tab_ai:
                 client = genai.Client(api_key=gemini_key)
                 elenco = "\n".join([f"- {p['match']} | {p['esito']} @ {p['quota']} ({'BASE' if p['base'] else 'VAR'})" for p in st.session_state.partite])
                 
-                # Utilizziamo gemini-2.5-flash pienamente compatibile con la nuova SDK
                 res = client.models.generate_content(
                     model='gemini-2.5-flash', 
                     contents=f"Analizza con approccio matematico e critico questo sistema di scommesse:\n{elenco}"
