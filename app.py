@@ -48,14 +48,13 @@ with st.sidebar:
 if "partite" not in st.session_state:
     st.session_state.partite = []
 
-# --- FUNZIONE ROBUSTA PER CHIAMATA GEMINI (GESTIONE ERRORE 503 CON RETRY E FALLBACK) ---
-def genera_con_gemini(client, prompt):
-    # Proviamo prima i modelli principali, poi quelli a massima stabilità
-    modelli = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-3.8-flash']
-    ultimo_errore = None
+# --- FUNZIONE ULTRA-ROBUSTA ANTI-503 PER GEMINI ---
+def genera_con_gemini_ultra_safe(client, prompt):
+    # Diamo priorità assoluta ai modelli flash più stabili e con meno traffico
+    modelli_fallback = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash']
     
-    for modello in modelli:
-        for tentativo in range(3): # fino a 3 tentativi per modello
+    for modello in modelli_fallback:
+        for tentativo in range(3):
             try:
                 res = client.models.generate_content(
                     model=modello,
@@ -64,26 +63,29 @@ def genera_con_gemini(client, prompt):
                 if res and res.text:
                     return res.text
             except Exception as e:
-                ultimo_errore = e
-                time.sleep(2 * (tentativo + 1)) # Attesa crescente se i server sono saturi
-                
-    raise ultimo_errore
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
+                    time.sleep(2 * (tentativo + 1)) # Attesa progressiva
+                    continue
+                else:
+                    # Se è un altro tipo di errore, passa al modello successivo
+                    break
+                    
+    raise Exception("I server Gemini sono attualmente tutti occupati. Riprova tra circa 30 secondi.")
 
-# --- RECUPERO PALINSESTO MULTI-CAMPIONATO (Serie A, Liga, Premier, Champions, ecc.) ---
+# --- RECUPERO PALINSESTO MULTI-CAMPIONATO ---
 @st.cache_data(ttl=600)
 def recupera_palinsesto_ampio(api_key):
     if not api_key:
         return []
     
-    # Lista delle principali leghe europee per coprire più partite possibili
     leghe = [
         "soccer_italy_serie_a",
         "soccer_spain_la_liga",
         "soccer_epl",
         "soccer_germany_bundesliga",
         "soccer_france_ligue_one",
-        "soccer_uefa_champs_league",
-        "soccer_uefa_europa_league"
+        "soccer_uefa_champs_league"
     ]
     
     tutte_le_partite = []
@@ -91,7 +93,7 @@ def recupera_palinsesto_ampio(api_key):
     for lega in leghe:
         url = f"https://api.the-odds-api.com/v4/sports/{lega}/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
         try:
-            res = requests.get(url, timeout=5)
+            res = requests.get(url, timeout=4)
             if res.status_code == 200:
                 data = res.json()
                 if isinstance(data, list):
@@ -99,7 +101,6 @@ def recupera_palinsesto_ampio(api_key):
         except Exception:
             continue
             
-    # Se le leghe specifiche falliscono o non hanno match immediati, usiamo il fallback generico
     if not tutte_le_partite:
         url_gen = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
         try:
@@ -123,14 +124,14 @@ with tab_input:
     palinsesto = recupera_palinsesto_ampio(odds_api_key)
     
     if odds_api_key and palinsesto:
-        search_query = st.text_input("🔍 Cerca squadra o partita (es. Lecce, Barcellona, Inter):", placeholder="Digita il nome della squadra...")
+        search_query = st.text_input("🔍 Cerca squadra o partita (es. Lecce, Inter, Real):", placeholder="Digita il nome della squadra...")
         
         elenco_partite_totale = list(dict.fromkeys([f"{m['home_team']} vs {m['away_team']}" for m in palinsesto]))
         
         if search_query.strip():
             elenco_filtrato = [p for p in elenco_partite_totale if search_query.lower() in p.lower()]
             if not elenco_filtrato:
-                st.info(f"Nessun match trovato nei prossimi giorni per '{search_query}'. Prova a selezionare la voce sotto per inserimento manuale.")
+                st.info(f"Nessun match trovato nei prossimi giorni per '{search_query}'. Usa l'inserimento manuale sotto.")
         else:
             elenco_filtrato = elenco_partite_totale
 
@@ -152,17 +153,12 @@ with tab_input:
                         if market['key'] == 'h2h':
                             for outcome in market['outcomes']:
                                 name = outcome['name']
-                                if name == home_team:
-                                    lbl = "1"
-                                elif name == away_team:
-                                    lbl = "2"
-                                else:
-                                    lbl = "X"
+                                lbl = "1" if name == home_team else ("2" if name == away_team else "X")
                                 opzioni_esiti[f"Esito {lbl}"] = outcome['price']
 
                         elif market['key'] == 'totals':
                             for outcome in market['outcomes']:
-                                name = outcome['name'] # Over / Under
+                                name = outcome['name']
                                 point = outcome.get('point', '')
                                 opzioni_esiti[f"{name} {point}"] = outcome['price']
                 
@@ -182,14 +178,11 @@ with tab_input:
                         st.success("Partita aggiunta al sistema!")
                         st.rerun()
     else:
-        if not odds_api_key:
-            st.info("💡 Inserisci 'The Odds API Key' nel menu laterale per attivare il palinsesto con ricerca automatica.")
-        else:
-            st.warning("Nessun evento scaricato dal palinsesto API al momento. Puoi aggiungerlo manualmente sotto.")
+        st.info("💡 Inserisci 'The Odds API Key' nel menu laterale o usa l'inserimento manuale.")
             
     st.markdown("---")
-    st.markdown("#### Inserimento Manuale (se non presente in palinsesto API)")
-    squadra_input = st.text_input("Inserisci nome partita/squadra (manuale):", placeholder="Es. Lecce vs Parma")
+    st.markdown("#### Inserimento Manuale")
+    squadra_input = st.text_input("Nome partita/squadra (manuale):", placeholder="Es. Lecce vs Parma")
     esito_sel = st.selectbox("Seleziona Esito", ["1", "X", "2", "Over 1.5", "Over 2.5", "Under 2.5", "Goal", "No Goal"])
     quota_input = st.number_input("Quota", min_value=1.01, value=1.90, step=0.05)
     is_base = st.checkbox("Imposta come BASE (Fissa)", key="manual_base")
@@ -212,28 +205,28 @@ with tab_input:
             st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: GENERATORE AUTOMATICO SISTEMI CON ESITI STANDARD ITALIANI
+# TAB 2: GENERATORE AUTOMATICO SISTEMI
 # ----------------------------------------------------
 with tab_auto:
     st.subheader("Generazione Automatica Sistema Value Bet")
-    st.write("L'algoritmo analizza le quote dei principali campionati europei calcolando le Value Bet.")
+    st.write("L'algoritmo seleziona le giocate a maggior valore dai palinsesti europei.")
     
     num_eventi = st.slider("Numero di eventi da generare", min_value=4, max_value=10, value=6)
     
     if st.button("⚡ Genera Sistema Automatico Ora"):
         if not gemini_key:
-            st.error("Inserisci la Gemini API Key nel menu laterale per la generazione automatica.")
+            st.error("Inserisci la Gemini API Key nel menu laterale.")
         elif not odds_api_key:
-            st.error("Serve la chiave The Odds API per scaricare le partite reali.")
+            st.error("Inserisci la chiave The Odds API.")
         else:
-            with st.spinner("1/2 Scaricamento palinsesti principali campionati europei..."):
+            with st.spinner("Scaricamento palinsesti reali..."):
                 palinsesto_realtime = recupera_palinsesto_ampio(odds_api_key)
             
             if not palinsesto_realtime:
-                st.error("Impossibile scaricare le partite da The Odds API. Verifica la validità della chiave o i limiti di utilizzo.")
+                st.error("Impossibile scaricare le quote live da The Odds API.")
             else:
                 sintesi_palinsesto = []
-                for m in palinsesto_realtime[:40]:
+                for m in palinsesto_realtime[:35]:
                     match_str = f"{m['home_team']} vs {m['away_team']}"
                     quote_str = []
                     for b in m.get('bookmakers', [])[:1]:
@@ -251,33 +244,55 @@ with tab_auto:
                 testo_palinsesto = "\n".join(sintesi_palinsesto)
                 
                 prompt_gen = f"""
-                Sei un analista quantitativo di scommesse sportive. 
-                Di seguito trovi il palinsesto reale delle prossime partite dei principali campionati europei con le relative quote:
+                Sei un esperto statistico di scommesse sportive.
+                Ecco il palinsesto delle prossime partite:
 
                 {testo_palinsesto}
 
-                Seleziona esattamente {num_eventi} partite TRA QUELLE IN ELENCO SOPRA che offrono il maggior valore (Value Bet).
+                Scegli esattamente {num_eventi} partite Value Bet.
                 
-                REGOLE TASSATIVE PER L'ESITO (NOTAZIONE ITALIANA):
-                - Per la vittoria della squadra di casa usa esclusivamente: "1"
-                - Per il pareggio usa esclusivamente: "X" (MAI "Draw" o nomi delle squadre)
-                - Per la vittoria della squadra in trasferta usa esclusivamente: "2"
-                - Per i gol usa notazioni standard: "Over 1.5", "Over 2.5", "Under 2.5", "Goal", "No Goal".
+                REGOLE TASSATIVE PER L'ESITO:
+                - Usa solo "1", "X", "2", "Over 1.5", "Over 2.5", "Under 2.5", "Goal", "No Goal".
+                - Imposta 1 o 2 partite come "BASE" e le altre come "VARIABILE".
 
-                Designa 1 o 2 eventi come "BASE" e i restanti come "VARIABILE".
-
-                Rispondi ESCLUSIVAMENTE con questo formato per ogni riga (senza alcuna riga introduttiva o finale):
+                Rispondi ESCLUSIVAMENTE rispettando questo formato riga per riga, senza alcun testo introduttivo:
                 SquadraA vs SquadraB | Esito | Quota | BASE/VARIABILE
                 """
                 
                 try:
-                    with st.spinner("2/2 Analisi Value Bet in corso con IA..."):
+                    with st.spinner("Analisi Value Bet con IA in corso..."):
                         client = genai.Client(api_key=gemini_key)
-                        testo_risposta = genera_con_gemini(client, prompt_gen)
-                        st.markdown("### 🎯 Sistema Reale Generato:")
+                        testo_risposta = genera_con_gemini_ultra_safe(client, prompt_gen)
+                        
+                        st.markdown("### 🎯 Sistema Generato:")
                         st.text(testo_risposta)
+                        
+                        # PARSING AUTOMATICO DEGLI EVENTI GENERATI NEL SESSION STATE
+                        st.session_state.partite = []
+                        righe = testo_risposta.strip().split("\n")
+                        for riga in righe:
+                            if "|" in riga:
+                                parti = [p.strip() for p in riga.split("|")]
+                                if len(parti) >= 4:
+                                    try:
+                                        match_nm = parti[0].replace("-", "").strip()
+                                        esito_nm = parti[1]
+                                        quota_val = float(parti[2])
+                                        is_b = True if "BASE" in parti[3].upper() else False
+                                        st.session_state.partite.append({
+                                            "match": match_nm,
+                                            "esito": esito_nm,
+                                            "quota": quota_val,
+                                            "base": is_b
+                                        })
+                                    except Exception:
+                                        pass
+                        
+                        if st.session_state.partite:
+                            st.success("✅ Gli eventi sono stati caricati automaticamente nelle schede 'Eventi' e 'Matrice'!")
+                            
                 except Exception as e:
-                    st.error(f"Impossibile completare la generazione al momento a causa di un sovraccarico temporaneo dei server IA. Riprova tra 10-15 secondi. Dettaglio: {e}")
+                    st.error(f"Errore: {e}")
 
 # ----------------------------------------------------
 # TAB 3: ANALISI IA
@@ -287,9 +302,9 @@ with tab_ai:
     
     if st.button("🚀 Avvia Analisi Strategica IA"):
         if not gemini_key:
-            st.error("Inserisci la tua Gemini API Key nella barra laterale per usare l'analisi.")
+            st.error("Inserisci la Gemini API Key.")
         elif not st.session_state.partite:
-            st.warning("Inserisci almeno una partita prima di avviare l'analisi.")
+            st.warning("Nessun evento nel sistema. Generane uno o inserisci delle partite.")
         else:
             try:
                 client = genai.Client(api_key=gemini_key)
@@ -302,13 +317,13 @@ with tab_ai:
                 Valuta:
                 1. Congruenza delle quote scelte.
                 2. Sostenibilità delle Basi fisse.
-                3. Eventuali trappole o fattori di rischio da considerare (forma, infortuni noti).
+                3. Eventuali trappole o fattori di rischio da considerare.
                 """
                 with st.spinner("Analisi in corso..."):
-                    testo_risposta = genera_con_gemini(client, prompt_analysis)
+                    testo_risposta = genera_con_gemini_ultra_safe(client, prompt_analysis)
                     st.markdown(testo_risposta)
             except Exception as e:
-                st.error(f"Server occupati, riprova tra qualche secondo: {e}")
+                st.error(f"Errore durante l'analisi: {e}")
 
 # ----------------------------------------------------
 # TAB 4: CALCOLO MATEMATICO DEL SISTEMA
@@ -324,7 +339,7 @@ with tab_math:
     k = len(variabili) - errori
     
     if len(variabili) <= errori:
-        st.warning(f"Servono almeno {errori + 1} eventi 'Variabili' per questo sistema.")
+        st.warning(f"Servono almeno {errori + 1} eventi 'Variabili' per calcolare questo sistema.")
     else:
         quote_var = [p['quota'] for p in variabili]
         combinazioni = list(itertools.combinations(quote_var, k))
