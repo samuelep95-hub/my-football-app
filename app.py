@@ -40,7 +40,7 @@ with st.sidebar:
     )
     odds_api_key = st.text_input(
         "The Odds API Key (Quote Live)", 
-        value=st.secrets.get("ODDS_API_KEY", ""), 
+        value=st.secrets.get("ODDS_API_KEY", "1fc996cb834a1af51b71c5eb9979dd53"), 
         type="password"
     )
 
@@ -63,7 +63,7 @@ def genera_con_gemini(client, prompt):
                 return res.text
             except Exception as e:
                 ultimo_errore = e
-                time.sleep(1) # Aspetta 1 secondo prima di riprovare
+                time.sleep(1)
                 
     raise ultimo_errore
 
@@ -74,7 +74,7 @@ def recupera_palinsesto_live(api_key):
         return []
     url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
     try:
-        res = requests.get(url, timeout=5)
+        res = requests.get(url, timeout=8)
         if res.status_code == 200:
             return res.json()
     except Exception:
@@ -128,6 +128,8 @@ with tab_input:
     else:
         if not odds_api_key:
             st.info("💡 Inserisci 'The Odds API Key' nel menu laterale per caricare automaticamente l'elenco delle partite e le quote reali.")
+        elif not palinsesto:
+            st.warning("Impossibile recuperare il palinsesto live. Verifica che la chiave The Odds API sia valida o inserisci i dati manualmente.")
         
         squadra_input = st.text_input("Inserisci nome partita/squadra (manuale):", placeholder="Es. Lecce vs Parma")
         esito_sel = st.selectbox("Seleziona Esito", ["1 (Vittoria Casa)", "X (Pareggio)", "2 (Vittoria Trasferta)", "Over 2.5", "Under 2.5", "Gol", "No Gol"])
@@ -152,36 +154,63 @@ with tab_input:
             st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: GENERATORE AUTOMATICO DI SISTEMI CON IA
+# TAB 2: GENERATORE AUTOMATICO DI SISTEMI CON IA (CON DATI REAL-TIME)
 # ----------------------------------------------------
 with tab_auto:
     st.subheader("Generazione Automatica Sistema Value Bet")
-    st.write("L'algoritmo cercherà automaticamente i migliori eventi europei del giorno bilanciando quote ed errore.")
+    st.write("L'algoritmo analizza le quote **reali e imminenti** fornite da The Odds API per costruire il miglior sistema.")
     
     num_eventi = st.slider("Numero di eventi da generare", min_value=4, max_value=10, value=6)
     
     if st.button("⚡ Genera Sistema Automatico Ora"):
         if not gemini_key:
-            st.error("Devi inserire la Gemini API Key per generare il sistema automatico!")
+            st.error("Devi inserire la Gemini API Key nel menu laterale per generare il sistema automatico!")
+        elif not odds_api_key:
+            st.error("Serve la chiave The Odds API per scaricare il palinsesto reale di oggi.")
         else:
-            try:
-                client = genai.Client(api_key=gemini_key)
+            with st.spinner("1/2 Recupero palinsesto reale ed eventi live..."):
+                palinsesto_realtime = recupera_palinsesto_live(odds_api_key)
+            
+            if not palinsesto_realtime:
+                st.error("Impossibile scaricare le partite reali da The Odds API. Controlla la chiave o riprova tra poco.")
+            else:
+                # Estraiamo un riassunto dei primi 20 match con relative quote per darli in pasto a Gemini
+                sintesi_palinsesto = []
+                for m in palinsesto_realtime[:25]:
+                    match_str = f"{m['home_team']} vs {m['away_team']}"
+                    quote_str = []
+                    for b in m.get('bookmakers', [])[:1]:
+                        for mk in b.get('markets', []):
+                            if mk['key'] == 'h2h':
+                                for out in mk['outcomes']:
+                                    quote_str.append(f"{out['name']}: {out['price']}")
+                    if quote_str:
+                        sintesi_palinsesto.append(f"- {match_str} -> {', '.join(quote_str)}")
+                
+                testo_palinsesto = "\n".join(sintesi_palinsesto)
+                
                 prompt_gen = f"""
-                Sei un tipster quantitativo. Genera una lista di esattamente {num_eventi} partite di calcio reali programmate per i prossimi giorni nei campionati europei.
-                
-                Per ciascuna partita seleziona un esito a quota medio-alta (tra 1.70 e 2.50) che presenti valore (Value Bet).
-                Designa 1 o 2 di questi eventi come "BASE" e le restanti come "VARIABILI".
-                
-                Rispondi ESCLUSIVAMENTE in formato testo pulito con questo schema per ogni riga:
+                Sei un analista scommesse quantitativo. Di seguito hai l'elenco delle PARTITE REALI IN PROGRAMMA OGGI con le relative quote di mercato:
+
+                {testo_palinsesto}
+
+                Seleziona esattamente {num_eventi} partite TRA QUELLE IN ELENCO SOPRA che rappresentano le migliori Value Bet.
+                Per ogni partita selezionata:
+                1. Scegli un esito vantaggioso.
+                2. Designa 1 o 2 eventi come "BASE" e i restanti come "VARIABILE".
+
+                Rispondi ESCLUSIVAMENTE con questo formato per ogni riga (senza altri commenti):
                 SquadraA vs SquadraB | Esito | Quota | BASE/VARIABILE
                 """
                 
-                with st.spinner("Ricerca Value Bet nei campionati europei..."):
-                    testo_risposta = genera_con_gemini(client, prompt_gen)
-                    st.markdown("### Sistema Suggerito dall'IA:")
-                    st.text(testo_risposta)
-            except Exception as e:
-                st.error(f"I server Google sono attualmente molto carichi. Riprova tra qualche secondo. ({e})")
+                try:
+                    with st.spinner("2/2 L'IA sta analizzando il valore delle quote..."):
+                        client = genai.Client(api_key=gemini_key)
+                        testo_risposta = genera_con_gemini(client, prompt_gen)
+                        st.markdown("### 🎯 Sistema Reale Generato per Oggi:")
+                        st.text(testo_risposta)
+                except Exception as e:
+                    st.error(f"Errore durante l'elaborazione IA: {e}")
 
 # ----------------------------------------------------
 # TAB 3: ANALISI IA
@@ -212,7 +241,7 @@ with tab_ai:
                     testo_risposta = genera_con_gemini(client, prompt_analysis)
                     st.markdown(testo_risposta)
             except Exception as e:
-                st.error(f"I server Google sono attualmente molto carichi. Riprova tra qualche secondo. ({e})")
+                st.error(f"Server occupati, riprova tra qualche secondo: {e}")
 
 # ----------------------------------------------------
 # TAB 4: CALCOLO MATEMATICO DEL SISTEMA
