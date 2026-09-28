@@ -67,6 +67,19 @@ def cerca_partite_live(query_squadra, api_key):
         pass
     return []
 
+def genera_con_fallback(client, prompt):
+    # Prova prima il modello primario, se fallisce usa il secondario
+    modelli = ['gemini-2.5-flash', 'gemini-1.5-flash']
+    ultimo_errore = None
+    for mod in modelli:
+        try:
+            res = client.models.generate_content(model=mod, contents=prompt)
+            return res.text
+        except Exception as e:
+            ultimo_errore = e
+            continue
+    raise ultimo_errore
+
 # SCHEDE PER SMARTPHONE
 tab_input, tab_auto, tab_ai, tab_math = st.tabs(["➕ Eventi", "⚡ Genera Sistema", "🤖 Analisi IA", "📊 Matrice"])
 
@@ -160,12 +173,9 @@ with tab_auto:
                 """
                 
                 with st.spinner("Ricerca Value Bet nei campionati europei..."):
-                    res = client.models.generate_content(
-                        model='gemini-3.8-flash',
-                        contents=prompt_gen
-                    )
+                    testo_risposta = genera_con_fallback(client, prompt_gen)
                     st.markdown("### Sistema Suggerito dall'IA:")
-                    st.text(res.text)
+                    st.text(testo_risposta)
             except Exception as e:
                 st.error(f"Errore generazione: {e}")
 
@@ -195,11 +205,8 @@ with tab_ai:
                 3. Eventuali trappole o fattori di rischio da considerare (forma, infortuni noti).
                 """
                 with st.spinner("Analisi in corso..."):
-                    res = client.models.generate_content(
-                        model='gemini-3.8-flash',
-                        contents=prompt_analysis
-                    )
-                    st.markdown(res.text)
+                    testo_analisi = genera_con_fallback(client, prompt_analysis)
+                    st.markdown(testo_analisi)
             except Exception as e:
                 st.error(f"Errore IA: {e}")
 
