@@ -1,6 +1,7 @@
 import streamlit as st
 import itertools
 import requests
+import time
 from google import genai
 
 # --- CONFIGURAZIONE PAGINA MOBILE ---
@@ -46,6 +47,25 @@ with st.sidebar:
 # INIZIALIZZAZIONE STATO
 if "partite" not in st.session_state:
     st.session_state.partite = []
+
+# --- FUNZIONE ROBUSTA PER CHIAMATA GEMINI (CON RETRY E FALLBACK) ---
+def genera_con_gemini(client, prompt):
+    modelli = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash']
+    ultimo_errore = None
+    
+    for modello in modelli:
+        for tentativo in range(2):
+            try:
+                res = client.models.generate_content(
+                    model=modello,
+                    contents=prompt
+                )
+                return res.text
+            except Exception as e:
+                ultimo_errore = e
+                time.sleep(1) # Aspetta 1 secondo prima di riprovare
+                
+    raise ultimo_errore
 
 # --- FUNZIONE RECUPERO PALINSESTO COMPLETO ---
 @st.cache_data(ttl=300)
@@ -157,14 +177,11 @@ with tab_auto:
                 """
                 
                 with st.spinner("Ricerca Value Bet nei campionati europei..."):
-                    res = client.models.generate_content(
-                        model='gemini-3.8-flash',
-                        contents=prompt_gen
-                    )
+                    testo_risposta = genera_con_gemini(client, prompt_gen)
                     st.markdown("### Sistema Suggerito dall'IA:")
-                    st.text(res.text)
+                    st.text(testo_risposta)
             except Exception as e:
-                st.error(f"Errore generazione: {e}")
+                st.error(f"I server Google sono attualmente molto carichi. Riprova tra qualche secondo. ({e})")
 
 # ----------------------------------------------------
 # TAB 3: ANALISI IA
@@ -192,13 +209,10 @@ with tab_ai:
                 3. Eventuali trappole o fattori di rischio da considerare (forma, infortuni noti).
                 """
                 with st.spinner("Analisi in corso..."):
-                    res = client.models.generate_content(
-                        model='gemini-3.8-flash',
-                        contents=prompt_analysis
-                    )
-                    st.markdown(res.text)
+                    testo_risposta = genera_con_gemini(client, prompt_analysis)
+                    st.markdown(testo_risposta)
             except Exception as e:
-                st.error(f"Errore IA: {e}")
+                st.error(f"I server Google sono attualmente molto carichi. Riprova tra qualche secondo. ({e})")
 
 # ----------------------------------------------------
 # TAB 4: CALCOLO MATEMATICO DEL SISTEMA
