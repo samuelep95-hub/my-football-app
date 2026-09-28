@@ -1,17 +1,17 @@
 import streamlit as st
 import itertools
+import requests
 from google import genai
-from google.genai import types
 
-# --- CONFIGURAZIONE PAGINA PER SMARTPHONE ---
+# --- CONFIGURAZIONE PAGINA MOBILE ---
 st.set_page_config(
-    page_title="Football System Strategy AI",
+    page_title="Football System Analyst AI",
     page_icon="⚽",
-    layout="centered", # 'centered' è l'ideale per il display verticale degli smartphone
+    layout="centered",
     initial_sidebar_state="collapsed"
 )
 
-# STILE CSS PERSONALIZZATO PER SCHERMI MOBILE
+# ESTETICA PER SMARTPHONE
 st.markdown("""
     <style>
     .stButton>button {
@@ -20,80 +20,164 @@ st.markdown("""
         height: 3em;
         font-weight: bold;
     }
-    .stMetric {
-        background-color: #1e222a;
-        padding: 10px;
-        border-radius: 8px;
+    .stSelectbox, .stTextInput {
+        margin-bottom: 10px;
     }
     </style>
-""", unsafe_allow_html=True)
+""", unsafe_unsafe_html=True)
 
 st.title("⚽ System Analyst AI")
-st.caption("Piattaforma mobile per la gestione e validazione di sistemi ad errore e value bets.")
+st.caption("Piattaforma mobile per la gestione, generazione automatica e validazione di sistemi.")
 
-# --- BARRA LATERALE PER CHIAVE API ---
+# --- GESTIONE CHIAVI API (DA STREAMLIT SECRETS O BARRA LATERALE) ---
 with st.sidebar:
-    st.header("⚙️ Impostazioni")
-    gemini_key = st.text_input("Inserisci la tua Gemini API Key", type="password", help="Ottieni una chiave gratuita da Google AI Studio")
-    st.markdown("---")
-    st.markdown("### Guida Rapida")
-    st.write("1. Aggiungi gli eventi con la relativa quota.\n2. Seleziona fino a 2 Basi (fisse).\n3. Lancia l'analisi IA o calcola l'efficienza del sistema.")
+    st.header("⚙️ Configurazione API")
+    gemini_key = st.text_input(
+        "Gemini API Key", 
+        value=st.secrets.get("GEMINI_API_KEY", ""), 
+        type="password"
+    )
+    odds_api_key = st.text_input(
+        "The Odds API Key (Quote Live)", 
+        value=st.secrets.get("ODDS_API_KEY", ""), 
+        type="password"
+    )
 
-# --- INIZIALIZZAZIONE STATO ---
+# INIZIALIZZAZIONE STATO
 if "partite" not in st.session_state:
     st.session_state.partite = []
 
-# --- SCHEDE NAVIGABILI DA MOBILE ---
-tab_input, tab_ai, tab_math = st.tabs(["➕ Eventi", "🤖 Analisi IA", "📊 Matrice Sistema"])
+# --- FUNZIONI PER RECUPERO QUOTE LIVE ---
+def cerca_partite_live(query_squadra, api_key):
+    if not api_key:
+        return []
+    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
+    try:
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            # Filtra le partite in base alla ricerca dell'utente
+            risultati = []
+            for match in data:
+                home = match.get('home_team', '')
+                away = match.get('away_team', '')
+                if query_squadra.lower() in home.lower() or query_squadra.lower() in away.lower():
+                    risultati.append(match)
+            return risultati
+    except Exception:
+        pass
+    return []
+
+# SCHEDE PER SMARTPHONE
+tab_input, tab_auto, tab_ai, tab_math = st.tabs(["➕ Eventi", "⚡ Genera Sistema", "🤖 Analisi IA", "📊 Matrice"])
 
 # ----------------------------------------------------
-# TAB 1: INSERIMENTO EVENTI
+# TAB 1: RICERCA PARTITE CON QUOTE REALI E MENU A TENDINA
 # ----------------------------------------------------
 with tab_input:
-    st.subheader("Inserisci Partita nel Sistema")
+    st.subheader("Cerca Partita e Selezione Quote")
     
-    with st.form("form_evento", clear_on_submit=True):
-        squadre = st.text_input("Partita / Campionato", placeholder="Es. Brescia vs Palermo (Serie B)")
-        esito = st.text_input("Esito / Mercato", placeholder="Es. Over 2.5 / Gol / 1X")
-        quota = st.number_input("Quota proposta dal Bookmaker", min_value=1.01, value=1.95, step=0.05)
-        is_base = st.checkbox("📌 Imposta come BASE (Fissa - zero errori)")
-        
-        btn_add = st.form_submit_button("Aggiungi al Sistema")
-        
-        if btn_add:
-            if squadre and esito:
-                st.session_state.partite.append({
-                    "match": squadre,
-                    "esito": esito,
-                    "quota": float(quota),
-                    "base": is_base
-                })
+    query = st.text_input("Scrivi il nome della squadra (es. Lecce, Parma, Arsenal)", placeholder="Cerca squadra...")
+    
+    if query:
+        if not odds_api_key:
+            st.info("💡 Inserisci la 'The Odds API Key' nel menu laterale per abilitare la ricerca live delle quote reale del palinsesto.")
+            # Modalità fallback manuale se l'API non è inserita
+            squadra_input = query
+            esito_sel = st.selectbox("Seleziona Esito", ["1 (Vittoria Casa)", "X (Pareggio)", "2 (Vittoria Trasferta)", "Over 2.5", "Under 2.5", "Gol", "No Gol"])
+            quota_input = st.number_input("Quota", min_value=1.01, value=1.90, step=0.05)
+            is_base = st.checkbox("Imposta come BASE (Fissa)")
+            if st.button("Aggiungi Manualmente"):
+                st.session_state.partite.append({"match": squadra_input, "esito": esito_sel, "quota": float(quota_input), "base": is_base})
                 st.success("Evento aggiunto!")
+                st.rerun()
+        else:
+            matches = cerca_partite_live(query, odds_api_key)
+            if matches:
+                st.write(f"Partite trovate ({len(matches)}):")
+                for m in matches:
+                    match_name = f"{m['home_team']} vs {m['away_team']}"
+                    st.markdown(f"**{match_name}**")
+                    
+                    # Estrazione mercati
+                    opzioni_esiti = {}
+                    for bookmaker in m.get('bookmakers', []):
+                        for market in bookmaker.get('markets', []):
+                            if market['key'] == 'h2h':
+                                for outcome in market['outcomes']:
+                                    opzioni_esiti[f"Esito 1X2: {outcome['name']}"] = outcome['price']
+                            elif market['key'] == 'totals':
+                                for outcome in market['outcomes']:
+                                    opzioni_esiti[f"Totale {outcome['name']} {outcome.get('point','')}"] = outcome['price']
+                    
+                    if opzioni_esiti:
+                        esito_scelto = st.selectbox("Seleziona il mercato/quota live:", list(opzioni_esiti.keys()), key=f"sel_{m['id']}")
+                        quota_scelta = opzioni_esiti[esito_scelto]
+                        st.write(f"Quota selezionata: **{quota_scelta}**")
+                        is_base_live = st.checkbox("Imposta come BASE", key=f"chk_{m['id']}")
+                        
+                        if st.button("Aggiungi al Sistema", key=f"btn_{m['id']}"):
+                            st.session_state.partite.append({
+                                "match": match_name,
+                                "esito": esito_scelto,
+                                "quota": float(quota_scelta),
+                                "base": is_base_live
+                            })
+                            st.success("Partita aggiunta al sistema!")
+                            st.rerun()
             else:
-                st.warning("Compila tutti i campi prima di aggiungere.")
+                st.warning("Nessuna partita trovata con questo nome nel palinsesto aggiornato.")
 
     st.markdown("---")
-    st.subheader(f"Eventi Inseriti ({len(st.session_state.partite)})")
-    
-    if st.session_state.partite:
-        for idx, item in enumerate(st.session_state.partite):
-            tipo = "📌 BASE (FISSA)" if item['base'] else "🔄 VARIABILE"
-            st.markdown(f"**{idx+1}. {item['match']}**")
-            st.caption(f"Mercato: `{item['esito']}` | Quota: **{item['quota']}** | Tipo: {tipo}")
-            
-            if st.button("Rimuovi", key=f"del_{idx}"):
-                st.session_state.partite.pop(idx)
-                st.rerun()
-            st.markdown("---")
-    else:
-        st.info("Nessuna partita presente. Aggiungi gli eventi per iniziare.")
+    st.subheader(f"Eventi Selezionati ({len(st.session_state.partite)})")
+    for idx, item in enumerate(st.session_state.partite):
+        tipo = "📌 BASE" if item['base'] else "🔄 VARIABILE"
+        st.write(f"**{idx+1}. {item['match']}** | {item['esito']} @ **{item['quota']}** ({tipo})")
+        if st.button("Rimuovi", key=f"del_{idx}"):
+            st.session_state.partite.pop(idx)
+            st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: ANALISI APPROFONDITA TRAMITE IA
+# TAB 2: GENERATORE AUTOMATICO DI SISTEMI CON IA
+# ----------------------------------------------------
+with tab_auto:
+    st.subheader("Generazione Automatica Sistema Value Bet")
+    st.write("L'algoritmo cercherà automaticamente i migliori eventi europei del giorno bilanciando quote ed errore.")
+    
+    num_eventi = st.slider("Numero di eventi da generare", min_value=4, max_value=10, value=6)
+    
+    if st.button("⚡ Genera Sistema Automatico Ora"):
+        if not gemini_key:
+            st.error("Devi inserire la Gemini API Key per generare il sistema automatico!")
+        else:
+            try:
+                client = genai.Client(api_key=gemini_key)
+                prompt_gen = f"""
+                Sei un tipster quantitativo. Genera una lista di esattamente {num_eventi} partite di calcio reali programmate per i prossimi giorni nei campionati europei (inclusi campionati minori come Serie B, Lega Pro/Serie C o seconde divisioni).
+                
+                Per ciascuna partita seleziona un esito a quota medio-alta (tra 1.70 e 2.50) che presenti valore (Value Bet).
+                Designa 1 o 2 di questi eventi come "BASE" (fisse più solide) e le restanti come "VARIABILI".
+                
+                Rispondi ESCLUSIVAMENTE in formato testo pulito con questo schema per ogni riga:
+                SquadraA vs SquadraB | Esito | Quota | BASE/VARIABILE
+                """
+                
+                with st.spinner("Ricerca Value Bet nei campionati europei..."):
+                    res = client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=prompt_gen
+                    )
+                    st.markdown("### Sistema Suggerito dall'IA:")
+                    st.text(res.text)
+                    st.info("Puoi aggiungere questi eventi manualmente nella scheda '➕ Eventi' per calcolare la matrice del sistema.")
+            except Exception as e:
+                st.error(f"Errore generazione: {e}")
+
+# ----------------------------------------------------
+# TAB 3: ANALISI APPROFONDITA TRAMITE IA
 # ----------------------------------------------------
 with tab_ai:
-    st.subheader("Analisi Statistica e Notizie (IA)")
-    st.write("L'IA analizzerà le partite inserite per identificare anomalie nelle quote o rischi nascosti.")
+    st.subheader("Analisi Statistica e Notizie")
     
     if st.button("🚀 Avvia Analisi Strategica IA"):
         if not gemini_key:
@@ -102,45 +186,32 @@ with tab_ai:
             st.warning("Inserisci almeno una partita prima di avviare l'analisi.")
         else:
             try:
-                # Inizializzazione SDK ufficiale google-genai
                 client = genai.Client(api_key=gemini_key)
+                elenco = "\n".join([f"- {p['match']} | {p['esito']} @ {p['quota']} ({'BASE' if p['base'] else 'VAR'})" for p in st.session_state.partite])
                 
-                # Costruzione del prompt analitico
-                elenco_partite = ""
-                for p in st.session_state.partite:
-                    elenco_partite += f"- Partita: {p['match']} | Esito: {p['esito']} | Quota: {p['quota']} | Ruolo: {'BASE' if p['base'] else 'VARIABILE'}\n"
+                prompt_analysis = f"""
+                Analizza con rigore matematico e critico le seguenti giocate per un sistema ad errore:
+                {elenco}
                 
-                prompt_sistema = f"""
-                Sei un analista quantitativo esperto in betting sportivo e Value Betting.
-                Analizza con estremo rigore e obiettività i seguenti eventi che l'utente vuole inserire in un sistema a correzione d'errore:
-
-                {elenco_partite}
-
-                Per ogni evento fornisci un feedback sintetico ma profondo focalizzato su:
-                1. RAGIONEVOLEZZA DELLA QUOTA: La quota proposta è sostenibile o nasconde rischi?
-                2. FATTORI DI RISCHIO: Rendimento casa/trasferta, probabili assenze, motivazioni.
-                3. IDONEITÀ AL SISTEMA: Se l'evento è impostato come "BASE", confermi che è affidabile? Se è una "VARIABILE", la quota giustifica il rischio?
-
-                Sii realista, severo ed evita qualsiasi toni accondiscendente. Se una giocata non ha senso matematico o strategico, segnalalo chiaramente.
+                Valuta:
+                1. Congruenza delle quote scelte.
+                2. Sostenibilità delle Basi fisse.
+                3. Eventuali trappole o fattori di rischio da considerare (forma, infortuni noti).
                 """
-                
-                with st.spinner("Analisi in corso sui server IA..."):
-                    response = client.models.generate_content(
+                with st.spinner("Analisi in corso..."):
+                    res = client.models.generate_content(
                         model='gemini-2.5-flash',
-                        contents=prompt_sistema,
+                        contents=prompt_analysis
                     )
-                    st.markdown("### Risultato Analisi IA:")
-                    st.markdown(response.text)
-                    
+                    st.markdown(res.text)
             except Exception as e:
-                st.error(f"Errore durante l'elaborazione IA: {e}")
+                st.error(f"Errore IA: {e}")
 
 # ----------------------------------------------------
-# TAB 3: CALCOLO MATEMATICO DEL SISTEMA
+# TAB 4: CALCOLO MATEMATICO DEL SISTEMA
 # ----------------------------------------------------
 with tab_math:
-    st.subheader("Validatore Matematico del Sistema")
-    
+    st.subheader("Validatore Matematico")
     errori = st.selectbox("Tolleranza Errori", [1, 2, 3], index=1)
     stake_colonna = st.number_input("Puntata per colonna (€)", min_value=0.5, value=1.0, step=0.5)
     
@@ -150,38 +221,30 @@ with tab_math:
     k = len(variabili) - errori
     
     if len(variabili) <= errori:
-        st.warning(f"Devi inserire almeno {errori + 1} eventi 'Variabili' per applicare {errori} errori.")
+        st.warning(f"Servono almeno {errori + 1} eventi 'Variabili' per questo sistema.")
     else:
-        # Calcolo combinazioni
         quote_var = [p['quota'] for p in variabili]
         combinazioni = list(itertools.combinations(quote_var, k))
         num_colonne = len(combinazioni)
         spesa_totale = num_colonne * stake_colonna
         
-        # Quota Basi
         quota_basi = 1.0
         for b in basi:
             quota_basi *= b['quota']
             
-        st.metric("Totale Bollette Sviluppate", num_colonne)
-        st.metric("Spesa Totale", f"{spesa_totale:.2f} €")
-        
-        st.markdown("---")
-        st.subheader("Scenario Minimo Garantito")
-        st.caption(f"Cosa succede se commetti esattamente {errori} errori e azzecchi solo le quote variabili più basse:")
-        
         peggiori_var = sorted(quote_var)[:k]
-        quota_minima_vincente = quota_basi
+        quota_minima = quota_basi
         for q in peggiori_var:
-            quota_minima_vincente *= q
+            quota_minima *= q
             
-        incasso_minimo = quota_minima_vincente * stake_colonna
+        incasso_minimo = quota_minima * stake_colonna
         profitto_minimo = incasso_minimo - spesa_totale
         
-        st.metric("Quota Colonna Minima", f"{quota_minima_vincente:.2f}")
-        st.metric("Incasso Minimo Lordo", f"{incasso_minimo:.2f} €")
+        st.metric("Bollette Sviluppate", num_colonne)
+        st.metric("Spesa Totale", f"{spesa_totale:.2f} €")
+        st.metric("Incasso Minimo Garantito", f"{incasso_minimo:.2f} €")
         
         if profitto_minimo >= 0:
-            st.success(f"🟢 **SISTEMA EFFICIENTE**: Profitto netto minimo garantito: +{profitto_minimo:.2f} €")
+            st.success(f"🟢 **SISTEMA EFFICIENTE**: Profitto netto minimo: +{profitto_minimo:.2f} €")
         else:
-            st.error(f"🔴 **SISTEMA NON CONVENIENTE**: Perdita netta nello scenario minimo: {profitto_minimo:.2f} €. Alza le quote o inserisci Basi più solide.")
+            st.error(f"🔴 **SISTEMA NON CONVENIENTE**: Perdita netta nello scenario peggiore: {profitto_minimo:.2f} €")
