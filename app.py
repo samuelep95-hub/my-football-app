@@ -73,7 +73,6 @@ with tab_input:
     palinsesto = recupera_palinsesto_live(odds_api_key)
     
     if odds_api_key and palinsesto:
-        # Se l'API Key è valida, mostriamo il menu a tendina con tutte le partite disponibili
         elenco_partite = [f"{m['home_team']} vs {m['away_team']}" for m in palinsesto]
         partita_selezionata = st.selectbox("Seleziona una partita dal palinsesto:", ["-- Scegli partita --"] + elenco_partite)
         
@@ -110,7 +109,6 @@ with tab_input:
         if not odds_api_key:
             st.info("💡 Inserisci 'The Odds API Key' nel menu laterale per caricare automaticamente l'elenco delle partite e le quote reali.")
         
-        # Inserimento manuale di riserva
         squadra_input = st.text_input("Inserisci nome partita/squadra (manuale):", placeholder="Es. Lecce vs Parma")
         esito_sel = st.selectbox("Seleziona Esito", ["1 (Vittoria Casa)", "X (Pareggio)", "2 (Vittoria Trasferta)", "Over 2.5", "Under 2.5", "Gol", "No Gol"])
         quota_input = st.number_input("Quota", min_value=1.01, value=1.90, step=0.05)
@@ -160,7 +158,7 @@ with tab_auto:
                 
                 with st.spinner("Ricerca Value Bet nei campionati europei..."):
                     res = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-3.8-flash',
                         contents=prompt_gen
                     )
                     st.markdown("### Sistema Suggerito dall'IA:")
@@ -195,7 +193,7 @@ with tab_ai:
                 """
                 with st.spinner("Analisi in corso..."):
                     res = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-3.8-flash',
                         contents=prompt_analysis
                     )
                     st.markdown(res.text)
