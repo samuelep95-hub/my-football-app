@@ -24,7 +24,7 @@ st.markdown("""
         margin-bottom: 10px;
     }
     </style>
-""", unsafe_unsafe_html=True)
+""", unsafe_allow_html=True)
 
 st.title("⚽ System Analyst AI")
 st.caption("Piattaforma mobile per la gestione, generazione automatica e validazione di sistemi.")
