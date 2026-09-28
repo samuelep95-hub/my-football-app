@@ -164,7 +164,7 @@ with tab_auto:
                 
                 with st.spinner("Ricerca Value Bet nei campionati europei..."):
                     res = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-1.5-flash',
                         contents=prompt_gen
                     )
                     st.markdown("### Sistema Suggerito dall'IA:")
@@ -200,7 +200,7 @@ with tab_ai:
                 """
                 with st.spinner("Analisi in corso..."):
                     res = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-1.5-flash',
                         contents=prompt_analysis
                     )
                     st.markdown(res.text)
