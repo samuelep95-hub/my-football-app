@@ -48,7 +48,7 @@ with st.sidebar:
 if "partite" not in st.session_state:
     st.session_state.partite = []
 
-# --- FUNZIONE ROBUSTA PER CHIAMATA GEMINI (CON RETRY E FALLBACK) ---
+# --- FUNZIONE CHIAMATA GEMINI (CON RETRY E FALLBACK) ---
 def genera_con_gemini(client, prompt):
     modelli = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash']
     ultimo_errore = None
@@ -85,33 +85,58 @@ def recupera_palinsesto_live(api_key):
 tab_input, tab_auto, tab_ai, tab_math = st.tabs(["➕ Eventi", "⚡ Genera Sistema", "🤖 Analisi IA", "📊 Matrice"])
 
 # ----------------------------------------------------
-# TAB 1: RICERCA PARTITE CON QUOTE REALI
+# TAB 1: RICERCA PARTITE E SELEZIONE QUOTE
 # ----------------------------------------------------
 with tab_input:
-    st.subheader("Cerca Partita e Selezione Quote")
+    st.subheader("Ricerca Partite e Selezione Quote")
     
     palinsesto = recupera_palinsesto_live(odds_api_key)
     
     if odds_api_key and palinsesto:
-        elenco_partite = [f"{m['home_team']} vs {m['away_team']}" for m in palinsesto]
-        partita_selezionata = st.selectbox("Seleziona una partita dal palinsesto:", ["-- Scegli partita --"] + elenco_partite)
+        # Campo di ricerca testuale per filtrare le squadre
+        search_query = st.text_input("🔍 Cerca squadra o partita (es. Barcellona, Inter, Real):", placeholder="Digita per filtrare...")
+        
+        elenco_partite_totale = [f"{m['home_team']} vs {m['away_team']}" for m in palinsesto]
+        
+        if search_query.strip():
+            elenco_filtrato = [p for p in elenco_partite_totale if search_query.lower() in p.lower()]
+        else:
+            elenco_filtrato = elenco_partite_totale
+
+        partita_selezionata = st.selectbox(
+            "Seleziona partita:", 
+            ["-- Scegli partita --"] + elenco_filtrato
+        )
         
         if partita_selezionata != "-- Scegli partita --":
             match_data = next((m for m in palinsesto if f"{m['home_team']} vs {m['away_team']}" == partita_selezionata), None)
             
             if match_data:
                 opzioni_esiti = {}
+                home_team = match_data.get('home_team')
+                away_team = match_data.get('away_team')
+
                 for bookmaker in match_data.get('bookmakers', []):
                     for market in bookmaker.get('markets', []):
                         if market['key'] == 'h2h':
                             for outcome in market['outcomes']:
-                                opzioni_esiti[f"Esito 1X2: {outcome['name']}"] = outcome['price']
+                                name = outcome['name']
+                                if name == home_team:
+                                    lbl = "1"
+                                elif name == away_team:
+                                    lbl = "2"
+                                else:
+                                    lbl = "X"
+                                opzioni_esiti[f"Esito {lbl}"] = outcome['price']
+
                         elif market['key'] == 'totals':
                             for outcome in market['outcomes']:
-                                opzioni_esiti[f"Totale {outcome['name']} {outcome.get('point','')}"] = outcome['price']
+                                name = outcome['name'] # Over / Under
+                                point = outcome.get('point', '')
+                                opzioni_esiti[f"{name} {point}"] = outcome['price']
                 
                 if opzioni_esiti:
-                    esito_scelto = st.selectbox("Seleziona mercato/quota live:", list(opzioni_esiti.keys()))
+                    esito_scelto = st.selectbox("Seleziona Esito e Quota:", list(opzioni_esiti.keys()))
                     quota_scelta = opzioni_esiti[esito_scelto]
                     st.write(f"Quota selezionata: **{quota_scelta}**")
                     is_base_live = st.checkbox("Imposta come BASE (Fissa)")
@@ -127,12 +152,12 @@ with tab_input:
                         st.rerun()
     else:
         if not odds_api_key:
-            st.info("💡 Inserisci 'The Odds API Key' nel menu laterale per caricare automaticamente l'elenco delle partite e le quote reali.")
+            st.info("💡 Inserisci 'The Odds API Key' nel menu laterale per accedere al palinsesto con ricerca automatica.")
         elif not palinsesto:
-            st.warning("Impossibile recuperare il palinsesto live. Verifica che la chiave The Odds API sia valida o inserisci i dati manualmente.")
+            st.warning("Impossibile caricare il palinsesto live. Inserisci i dati manualmente.")
         
-        squadra_input = st.text_input("Inserisci nome partita/squadra (manuale):", placeholder="Es. Lecce vs Parma")
-        esito_sel = st.selectbox("Seleziona Esito", ["1 (Vittoria Casa)", "X (Pareggio)", "2 (Vittoria Trasferta)", "Over 2.5", "Under 2.5", "Gol", "No Gol"])
+        squadra_input = st.text_input("Inserisci nome partita/squadra (manuale):", placeholder="Es. Barcellona vs Real Madrid")
+        esito_sel = st.selectbox("Seleziona Esito", ["1", "X", "2", "Over 1.5", "Over 2.5", "Under 2.5", "Goal", "No Goal"])
         quota_input = st.number_input("Quota", min_value=1.01, value=1.90, step=0.05)
         is_base = st.checkbox("Imposta come BASE (Fissa)")
         
@@ -154,63 +179,72 @@ with tab_input:
             st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: GENERATORE AUTOMATICO DI SISTEMI CON IA (CON DATI REAL-TIME)
+# TAB 2: GENERATORE AUTOMATICO SISTEMI CON ESITI STANDARD ITALIANI
 # ----------------------------------------------------
 with tab_auto:
     st.subheader("Generazione Automatica Sistema Value Bet")
-    st.write("L'algoritmo analizza le quote **reali e imminenti** fornite da The Odds API per costruire il miglior sistema.")
+    st.write("L'algoritmo seleziona gli eventi imminenti calcolando le quote di valore.")
     
     num_eventi = st.slider("Numero di eventi da generare", min_value=4, max_value=10, value=6)
     
     if st.button("⚡ Genera Sistema Automatico Ora"):
         if not gemini_key:
-            st.error("Devi inserire la Gemini API Key nel menu laterale per generare il sistema automatico!")
+            st.error("Inserisci la Gemini API Key nel menu laterale per la generazione automatica.")
         elif not odds_api_key:
-            st.error("Serve la chiave The Odds API per scaricare il palinsesto reale di oggi.")
+            st.error("Serve la chiave The Odds API per scaricare le partite reali.")
         else:
-            with st.spinner("1/2 Recupero palinsesto reale ed eventi live..."):
+            with st.spinner("Recupero partite e quote in tempo reale..."):
                 palinsesto_realtime = recupera_palinsesto_live(odds_api_key)
             
             if not palinsesto_realtime:
-                st.error("Impossibile scaricare le partite reali da The Odds API. Controlla la chiave o riprova tra poco.")
+                st.error("Impossibile scaricare le partite. Verifica la tua API Key di The Odds API.")
             else:
-                # Estraiamo un riassunto dei primi 20 match con relative quote per darli in pasto a Gemini
                 sintesi_palinsesto = []
-                for m in palinsesto_realtime[:25]:
+                for m in palinsesto_realtime[:30]:
                     match_str = f"{m['home_team']} vs {m['away_team']}"
                     quote_str = []
                     for b in m.get('bookmakers', [])[:1]:
                         for mk in b.get('markets', []):
                             if mk['key'] == 'h2h':
                                 for out in mk['outcomes']:
-                                    quote_str.append(f"{out['name']}: {out['price']}")
+                                    name = "1" if out['name'] == m['home_team'] else ("2" if out['name'] == m['away_team'] else "X")
+                                    quote_str.append(f"{name}: {out['price']}")
+                            elif mk['key'] == 'totals':
+                                for out in mk['outcomes']:
+                                    quote_str.append(f"{out['name']} {out.get('point','')}: {out['price']}")
                     if quote_str:
                         sintesi_palinsesto.append(f"- {match_str} -> {', '.join(quote_str)}")
                 
                 testo_palinsesto = "\n".join(sintesi_palinsesto)
                 
                 prompt_gen = f"""
-                Sei un analista scommesse quantitativo. Di seguito hai l'elenco delle PARTITE REALI IN PROGRAMMA OGGI con le relative quote di mercato:
+                Sei un analista quantitativo di scommesse sportive. 
+                Di seguito trovi il palinsesto reale delle prossime partite con le relative quote di mercato:
 
                 {testo_palinsesto}
 
-                Seleziona esattamente {num_eventi} partite TRA QUELLE IN ELENCO SOPRA che rappresentano le migliori Value Bet.
-                Per ogni partita selezionata:
-                1. Scegli un esito vantaggioso.
-                2. Designa 1 o 2 eventi come "BASE" e i restanti come "VARIABILE".
+                Seleziona esattamente {num_eventi} partite TRA QUELLE IN ELENCO SOPRA che offrono il maggior valore (Value Bet).
+                
+                REGOLE STRITTE PER L'ESITO (NOTAZIONE ITALIANA):
+                - Per la vittoria della squadra di casa usa esclusivamente: "1"
+                - Per il pareggio usa esclusivamente: "X" (NON usare mai "Draw" o nomi squadra)
+                - Per la vittoria della squadra in trasferta usa esclusivamente: "2"
+                - Per i gol usa notazioni standard: "Over 1.5", "Over 2.5", "Under 2.5", "Goal", "No Goal".
 
-                Rispondi ESCLUSIVAMENTE con questo formato per ogni riga (senza altri commenti):
+                Designa 1 o 2 eventi come "BASE" e i restanti come "VARIABILE".
+
+                Rispondi ESCLUSIVAMENTE con questo formato per ogni riga (senza introduzione né spiegazioni):
                 SquadraA vs SquadraB | Esito | Quota | BASE/VARIABILE
                 """
                 
                 try:
-                    with st.spinner("2/2 L'IA sta analizzando il valore delle quote..."):
+                    with st.spinner("Analisi Value Bet in corso con IA..."):
                         client = genai.Client(api_key=gemini_key)
                         testo_risposta = genera_con_gemini(client, prompt_gen)
-                        st.markdown("### 🎯 Sistema Reale Generato per Oggi:")
+                        st.markdown("### 🎯 Sistema Reale Generato:")
                         st.text(testo_risposta)
                 except Exception as e:
-                    st.error(f"Errore durante l'elaborazione IA: {e}")
+                    st.error(f"Errore generazione IA: {e}")
 
 # ----------------------------------------------------
 # TAB 3: ANALISI IA
@@ -220,7 +254,7 @@ with tab_ai:
     
     if st.button("🚀 Avvia Analisi Strategica IA"):
         if not gemini_key:
-            st.error("Devi inserire la tua Gemini API Key nella barra laterale per usare l'analisi!")
+            st.error("Inserisci la tua Gemini API Key nella barra laterale per usare l'analisi.")
         elif not st.session_state.partite:
             st.warning("Inserisci almeno una partita prima di avviare l'analisi.")
         else:
