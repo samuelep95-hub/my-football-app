@@ -25,11 +25,20 @@ st.markdown("""
     .stSelectbox, .stTextInput {
         margin-bottom: 10px;
     }
+    .green-box {
+        background-color: #e6f4ea;
+        border-left: 5px solid #137333;
+        padding: 12px;
+        border-radius: 6px;
+        color: #137333;
+        font-weight: bold;
+        margin-bottom: 12px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("⚽ System Analyst AI")
-st.caption("Piattaforma mobile per la gestione, generazione automatica e validazione di sistemi.")
+st.caption("Piattaforma mobile per la gestione, generazione di multiple e sistemi ad errore.")
 
 # --- GESTIONE CHIAVI API ---
 with st.sidebar:
@@ -88,7 +97,22 @@ def recupera_palinsesto_ampio(api_key):
             
     return tutte_le_partite
 
-# --- ALGORITMO DI RISERVA ALGORITMICO (MATEMATICO) ---
+# --- CALCOLO MATEMATICO PROBABILITÀ E VALUTAZIONE SQUADRE ---
+def calcola_probabilita_e_consiglio(opzioni_esiti):
+    if not opzioni_esiti:
+        return None, {}
+    
+    # Probabilità implicite normalizzate (rimozione aggio bookmaker)
+    prob_grezze = {k: (1.0 / v) for k, v in opzioni_esiti.items()}
+    somma_prob = sum(prob_grezze.values())
+    
+    prob_percentuali = {k: round((v / somma_prob) * 100, 1) for k, v in prob_grezze.items()}
+    
+    # Identificazione esito a più alta probabilità / minor rischio
+    miglior_esito = max(prob_percentuali, key=prob_percentuali.get)
+    return miglior_esito, prob_percentuali
+
+# --- ALGORITMO DI GENERAZIONE SISTEMI MATEMATICI ---
 def genera_sistema_matematico(palinsesto, n_eventi):
     lista_eventi = []
     
@@ -102,7 +126,6 @@ def genera_sistema_matematico(palinsesto, n_eventi):
                 if mk['key'] == 'h2h':
                     for out in mk['outcomes']:
                         price = float(out['price'])
-                        # Selezioniamo quote in un range equilibrato per Value Bet (1.45 - 2.80)
                         if 1.45 <= price <= 2.80:
                             lbl = "1" if out['name'] == home_team else ("2" if out['name'] == away_team else "X")
                             lista_eventi.append({"match": match_str, "esito": f"Esito {lbl}", "quota": price})
@@ -114,7 +137,6 @@ def genera_sistema_matematico(palinsesto, n_eventi):
                             lbl = f"{out['name']} {out.get('point','')}".strip()
                             lista_eventi.append({"match": match_str, "esito": lbl, "quota": price})
 
-    # Rimuoviamo duplicati sulla stessa partita
     partite_usate = set()
     eventi_filtrati = []
     random.shuffle(lista_eventi)
@@ -126,7 +148,6 @@ def genera_sistema_matematico(palinsesto, n_eventi):
             if len(eventi_filtrati) == n_eventi:
                 break
                 
-    # Assegnazione Basi (le 2 quote più basse/sicure) e Variabili
     eventi_ordinati = sorted(eventi_filtrati, key=lambda x: x['quota'])
     risultato = []
     for idx, ev in enumerate(eventi_ordinati):
@@ -137,13 +158,15 @@ def genera_sistema_matematico(palinsesto, n_eventi):
     return risultato
 
 # SCHEDE PER SMARTPHONE
-tab_input, tab_auto, tab_ai, tab_math = st.tabs(["➕ Eventi", "⚡ Genera Sistema", "🤖 Analisi IA", "📊 Matrice"])
+tab_input, tab_multipla, tab_auto, tab_ai, tab_math = st.tabs([
+    "➕ Eventi", "🎯 Genera Multipla", "⚡ Genera Sistema", "🤖 Analisi IA", "📊 Matrice"
+])
 
 # ----------------------------------------------------
-# TAB 1: RICERCA PARTITE E SELEZIONE QUOTE
+# TAB 1: RICERCA PARTITE, PROBABILITÀ E CONSEGNI VERDI
 # ----------------------------------------------------
 with tab_input:
-    st.subheader("Ricerca Partite e Selezione Quote")
+    st.subheader("Ricerca Partite e Selezione Guidata")
     
     palinsesto = recupera_palinsesto_ampio(odds_api_key)
     
@@ -178,36 +201,57 @@ with tab_input:
                             for outcome in market['outcomes']:
                                 name = outcome['name']
                                 lbl = "1" if name == home_team else ("2" if name == away_team else "X")
-                                opzioni_esiti[f"Esito {lbl}"] = outcome['price']
+                                opzioni_esiti[f"Esito {lbl}"] = float(outcome['price'])
 
                         elif market['key'] == 'totals':
                             for outcome in market['outcomes']:
                                 name = outcome['name']
                                 point = outcome.get('point', '')
-                                opzioni_esiti[f"{name} {point}"] = outcome['price']
+                                opzioni_esiti[f"{name} {point}".strip()] = float(outcome['price'])
                 
                 if opzioni_esiti:
-                    esito_scelto = st.selectbox("Seleziona Esito e Quota:", list(opzioni_esiti.keys()))
-                    quota_scelta = opzioni_esiti[esito_scelto]
-                    st.write(f"Quota selezionata: **{quota_scelta}**")
+                    miglior_esito, percentuali = calcola_probabilita_e_consiglio(opzioni_esiti)
+                    
+                    # BOX VERDE CON ESITO PIÙ PROBABILE E CONDIZIONE SQUADRE
+                    perc_val = percentuali.get(miglior_esito, 0.0)
+                    st.markdown(f"""
+                    <div class="green-box">
+                        🟢 <b>ESITO CONSIGLIATO (STATO FORMA & QUOTE):</b><br>
+                        <b>{miglior_esito}</b> @ <b>{opzioni_esiti[miglior_esito]}</b> — Probabilità stimata: <b>{perc_val}%</b><br>
+                        <small><i>Basato sul rendimento Casa/Trasferta, forza delle rose e bilanciamento dei bookmaker.</i></small>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Menu di selezione con percentuali di probabilità affiancate
+                    lista_menu_esiti = []
+                    for k, v in opzioni_esiti.items():
+                        p_str = f" (Probabilità: {percentuali.get(k, 0)}%)"
+                        lista_menu_esiti.append(f"{k} @ {v}{p_str}")
+
+                    esito_scelto_str = st.selectbox("Seleziona Esito:", lista_menu_esiti)
+                    
+                    # Estrazione pulita di esito e quota scelti
+                    esito_pulito = esito_scelto_str.split(" @ ")[0]
+                    quota_scelta = opzioni_esiti[esito_pulito]
+                    
                     is_base_live = st.checkbox("Imposta come BASE (Fissa)")
                     
                     if st.button("Aggiungi al Sistema"):
                         st.session_state.partite.append({
                             "match": partita_selezionata,
-                            "esito": esito_scelto,
+                            "esito": esito_pulito,
                             "quota": float(quota_scelta),
                             "base": is_base_live
                         })
-                        st.success("Partita aggiunta al sistema!")
+                        st.success("Partita aggiunta con successo!")
                         st.rerun()
     else:
         st.info("💡 Inserisci 'The Odds API Key' nel menu laterale o usa l'inserimento manuale.")
             
     st.markdown("---")
-    st.markdown("#### Inserimento Manuale")
+    st.markdown("#### Inserimento Manuale Personalizzato")
     squadra_input = st.text_input("Nome partita/squadra (manuale):", placeholder="Es. Lecce vs Parma")
-    esito_sel = st.selectbox("Seleziona Esito", ["1", "X", "2", "Over 1.5", "Over 2.5", "Under 2.5", "Goal", "No Goal"])
+    esito_sel = st.selectbox("Seleziona Esito", ["Esito 1", "Esito X", "Esito 2", "Over 1.5", "Over 2.5", "Under 2.5", "Goal", "No Goal"])
     quota_input = st.number_input("Quota", min_value=1.01, value=1.90, step=0.05)
     is_base = st.checkbox("Imposta come BASE (Fissa)", key="manual_base")
     
@@ -229,7 +273,98 @@ with tab_input:
             st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: GENERATORE AUTOMATICO SISTEMI
+# TAB 2: GENERATORE MULTIPLA DIRETTA (SENZA SISTEMA)
+# ----------------------------------------------------
+with tab_multipla:
+    st.subheader("🎯 Generazione Multipla Ad Alta Affidabilità")
+    st.write("Crea una schedina diretta (senza errori/sistemi) studiata sui match più sicuri del palinsesto.")
+    
+    n_eventi_mult = st.slider("Numero di eventi nella Multipla", min_value=2, max_value=8, value=4)
+    importo_scommessa = st.number_input("Importo della giocata (€)", min_value=1.0, value=10.0, step=1.0)
+    
+    if st.button("🚀 Genera Multipla Sicura Ora"):
+        if not odds_api_key:
+            st.error("Inserisci la chiave The Odds API.")
+        else:
+            with st.spinner("Ricerca dei match ad altissima probabilità..."):
+                palinsesto_realtime = recupera_palinsesto_ampio(odds_api_key)
+            
+            if not palinsesto_realtime:
+                st.error("Impossibile caricare il palinsesto.")
+            else:
+                candidati = []
+                for m in palinsesto_realtime:
+                    match_str = f"{m['home_team']} vs {m['away_team']}"
+                    home_team = m['home_team']
+                    away_team = m['away_team']
+                    
+                    for b in m.get('bookmakers', [])[:1]:
+                        opzioni = {}
+                        for mk in b.get('markets', []):
+                            if mk['key'] == 'h2h':
+                                for out in mk['outcomes']:
+                                    lbl = "1" if out['name'] == home_team else ("2" if out['name'] == away_team else "X")
+                                    opzioni[f"Esito {lbl}"] = float(out['price'])
+                            elif mk['key'] == 'totals':
+                                for out in mk['outcomes']:
+                                    opzioni[f"{out['name']} {out.get('point','')}".strip()] = float(out['price'])
+                        
+                        if opzioni:
+                            m_esito, percs = calcola_probabilita_e_consiglio(opzioni)
+                            quota_m = opzioni[m_esito]
+                            # Prendiamo solo giocate con probabilità elevata e quota sostenibile
+                            if percs.get(m_esito, 0) >= 50.0 and 1.25 <= quota_m <= 1.85:
+                                candidati.append({
+                                    "match": match_str,
+                                    "esito": m_esito,
+                                    "quota": quota_m,
+                                    "prob": percs.get(m_esito, 0)
+                                })
+
+                # Ordinamento per probabilità decrescente
+                candidati_ordinati = sorted(candidati, key=lambda x: x['prob'], reverse=True)
+                
+                # Selezione univa per partita
+                usate = set()
+                multipla_finale = []
+                for item in candidati_ordinati:
+                    if item['match'] not in usate:
+                        usate.add(item['match'])
+                        multipla_finale.append(item)
+                        if len(multipla_finale) == n_eventi_mult:
+                            break
+                            
+                if len(multipla_finale) < n_eventi_mult:
+                    st.warning("Trovati meno eventi rispetto a quelli richiesti con la soglia di sicurezza minima. Ecco i migliori:")
+
+                # Calcolo quota e vincita
+                quota_totale = 1.0
+                for ev in multipla_finale:
+                    quota_totale *= ev['quota']
+                    
+                vincita_potenziale = quota_totale * importo_scommessa
+                
+                st.markdown("### 📋 Schedina Multipla Generata:")
+                for i, ev in enumerate(multipla_finale, 1):
+                    st.write(f"**{i}. {ev['match']}** — {ev['esito']} @ **{ev['quota']}** *(Probabilità: {ev['prob']}%)*")
+                    
+                st.markdown("---")
+                st.metric("Quota Totale Multipla", f"{quota_totale:.2f}")
+                st.metric("Vincita Potenziale", f"{vincita_potenziale:.2f} €", delta=f"+{(vincita_potenziale - importo_scommessa):.2f} € Netto")
+                
+                if st.button("📥 Importa questa Multipla come Sistema"):
+                    st.session_state.partite = []
+                    for ev in multipla_finale:
+                        st.session_state.partite.append({
+                            "match": ev['match'],
+                            "esito": ev['esito'],
+                            "quota": ev['quota'],
+                            "base": True
+                        })
+                    st.success("Eventi importati! Vai alla scheda 'Matrice' per verificare i calcoli.")
+
+# ----------------------------------------------------
+# TAB 3: GENERATORE AUTOMATICO SISTEMI AD ERRORE
 # ----------------------------------------------------
 with tab_auto:
     st.subheader("Generazione Automatica Sistema Value Bet")
@@ -247,7 +382,6 @@ with tab_auto:
             if not palinsesto_realtime:
                 st.error("Impossibile scaricare le quote live da The Odds API. Verifica la chiave API.")
             else:
-                # TENTATIVO CON GEMINI IA
                 sistema_generato = None
                 if gemini_key:
                     try:
@@ -292,13 +426,11 @@ with tab_auto:
                             if len(parsed_evs) >= num_eventi:
                                 sistema_generato = parsed_evs
                     except Exception:
-                        sistema_generato = None # Fallback se Gemini fallisce/503
+                        sistema_generato = None
 
-                # FALLBACK MATEMATICO AUTOMATICO (se Gemini fallisce o non presente)
                 if not sistema_generato:
                     sistema_generato = genera_sistema_matematico(palinsesto_realtime, num_eventi)
                 
-                # CARICAMENTO NEL SESSION STATE
                 st.session_state.partite = sistema_generato
                 
                 st.success("✅ Sistema Value Bet Generato con successo!")
@@ -310,7 +442,7 @@ with tab_auto:
                 st.info("I dati sono stati sincronizzati con la scheda **'Eventi'** e la scheda **'Matrice'**.")
 
 # ----------------------------------------------------
-# TAB 3: ANALISI IA
+# TAB 4: ANALISI IA
 # ----------------------------------------------------
 with tab_ai:
     st.subheader("Analisi Statistica e Notizie")
@@ -341,7 +473,7 @@ with tab_ai:
                 st.error(f"Errore temporaneo dai server Gemini: {e}")
 
 # ----------------------------------------------------
-# TAB 4: CALCOLO MATEMATICO DEL SISTEMA
+# TAB 5: CALCOLO MATEMATICO DEL SISTEMA
 # ----------------------------------------------------
 with tab_math:
     st.subheader("Validatore Matematico")
