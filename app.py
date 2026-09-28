@@ -29,7 +29,7 @@ st.markdown("""
 st.title("⚽ System Analyst AI")
 st.caption("Piattaforma mobile per la gestione, generazione automatica e validazione di sistemi.")
 
-# --- GESTIONE CHIAVI API (DA STREAMLIT SECRETS O BARRA LATERALE) ---
+# --- GESTIONE CHIAVI API ---
 with st.sidebar:
     st.header("⚙️ Configurazione API")
     gemini_key = st.text_input(
@@ -56,7 +56,6 @@ def cerca_partite_live(query_squadra, api_key):
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
             data = res.json()
-            # Filtra le partite in base alla ricerca dell'utente
             risultati = []
             for match in data:
                 home = match.get('home_team', '')
@@ -72,7 +71,7 @@ def cerca_partite_live(query_squadra, api_key):
 tab_input, tab_auto, tab_ai, tab_math = st.tabs(["➕ Eventi", "⚡ Genera Sistema", "🤖 Analisi IA", "📊 Matrice"])
 
 # ----------------------------------------------------
-# TAB 1: RICERCA PARTITE CON QUOTE REALI E MENU A TENDINA
+# TAB 1: RICERCA PARTITE CON QUOTE REALI
 # ----------------------------------------------------
 with tab_input:
     st.subheader("Cerca Partita e Selezione Quote")
@@ -81,8 +80,7 @@ with tab_input:
     
     if query:
         if not odds_api_key:
-            st.info("💡 Inserisci la 'The Odds API Key' nel menu laterale per abilitare la ricerca live delle quote reale del palinsesto.")
-            # Modalità fallback manuale se l'API non è inserita
+            st.info("💡 Per vedere le partite live e le quote aggiornate dei bookmaker, inserisci la 'The Odds API Key' (gratuita) nel menu laterale.")
             squadra_input = query
             esito_sel = st.selectbox("Seleziona Esito", ["1 (Vittoria Casa)", "X (Pareggio)", "2 (Vittoria Trasferta)", "Over 2.5", "Under 2.5", "Gol", "No Gol"])
             quota_input = st.number_input("Quota", min_value=1.01, value=1.90, step=0.05)
@@ -99,7 +97,6 @@ with tab_input:
                     match_name = f"{m['home_team']} vs {m['away_team']}"
                     st.markdown(f"**{match_name}**")
                     
-                    # Estrazione mercati
                     opzioni_esiti = {}
                     for bookmaker in m.get('bookmakers', []):
                         for market in bookmaker.get('markets', []):
@@ -153,10 +150,10 @@ with tab_auto:
             try:
                 client = genai.Client(api_key=gemini_key)
                 prompt_gen = f"""
-                Sei un tipster quantitativo. Genera una lista di esattamente {num_eventi} partite di calcio reali programmate per i prossimi giorni nei campionati europei (inclusi campionati minori come Serie B, Lega Pro/Serie C o seconde divisioni).
+                Sei un tipster quantitativo. Genera una lista di esattamente {num_eventi} partite di calcio reali programmate per i prossimi giorni nei campionati europei.
                 
                 Per ciascuna partita seleziona un esito a quota medio-alta (tra 1.70 e 2.50) che presenti valore (Value Bet).
-                Designa 1 o 2 di questi eventi come "BASE" (fisse più solide) e le restanti come "VARIABILI".
+                Designa 1 o 2 di questi eventi come "BASE" e le restanti come "VARIABILI".
                 
                 Rispondi ESCLUSIVAMENTE in formato testo pulito con questo schema per ogni riga:
                 SquadraA vs SquadraB | Esito | Quota | BASE/VARIABILE
@@ -164,17 +161,16 @@ with tab_auto:
                 
                 with st.spinner("Ricerca Value Bet nei campionati europei..."):
                     res = client.models.generate_content(
-                        model='gemini-1.5-flash',
+                        model='gemini-2.5-flash',
                         contents=prompt_gen
                     )
                     st.markdown("### Sistema Suggerito dall'IA:")
                     st.text(res.text)
-                    st.info("Puoi aggiungere questi eventi manualmente nella scheda '➕ Eventi' per calcolare la matrice del sistema.")
             except Exception as e:
                 st.error(f"Errore generazione: {e}")
 
 # ----------------------------------------------------
-# TAB 3: ANALISI APPROFONDITA TRAMITE IA
+# TAB 3: ANALISI IA
 # ----------------------------------------------------
 with tab_ai:
     st.subheader("Analisi Statistica e Notizie")
@@ -200,7 +196,7 @@ with tab_ai:
                 """
                 with st.spinner("Analisi in corso..."):
                     res = client.models.generate_content(
-                        model='gemini-1.5-flash',
+                        model='gemini-2.5-flash',
                         contents=prompt_analysis
                     )
                     st.markdown(res.text)
@@ -248,3 +244,4 @@ with tab_math:
             st.success(f"🟢 **SISTEMA EFFICIENTE**: Profitto netto minimo: +{profitto_minimo:.2f} €")
         else:
             st.error(f"🔴 **SISTEMA NON CONVENIENTE**: Perdita netta nello scenario peggiore: {profitto_minimo:.2f} €")
+    
