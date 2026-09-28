@@ -161,7 +161,7 @@ with tab_auto:
                 
                 with st.spinner("Ricerca Value Bet nei campionati europei..."):
                     res = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-3.8-flash',
                         contents=prompt_gen
                     )
                     st.markdown("### Sistema Suggerito dall'IA:")
@@ -196,7 +196,7 @@ with tab_ai:
                 """
                 with st.spinner("Analisi in corso..."):
                     res = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-3.8-flash',
                         contents=prompt_analysis
                     )
                     st.markdown(res.text)
@@ -244,4 +244,3 @@ with tab_math:
             st.success(f"🟢 **SISTEMA EFFICIENTE**: Profitto netto minimo: +{profitto_minimo:.2f} €")
         else:
             st.error(f"🔴 **SISTEMA NON CONVENIENTE**: Perdita netta nello scenario peggiore: {profitto_minimo:.2f} €")
-    
