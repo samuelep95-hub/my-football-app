@@ -4,7 +4,7 @@ import requests
 import random
 from google import genai
 
-# --- CONFIGURAZIONE PAGINA ---
+# --- CONFIGURAZIONE PAGINA MOBILE ---
 st.set_page_config(
     page_title="Football System Analyst AI",
     page_icon="⚽",
@@ -53,23 +53,55 @@ with st.sidebar:
 if "partite" not in st.session_state:
     st.session_state.partite = []
 
-# --- RECUPERO PALINSESTO STABILE E VELOCE ---
+# --- RECUPERO PALINSESTO COMPLETO ED ESTESO ---
 @st.cache_data(ttl=300)
 def recupera_palinsesto_stabile(api_key):
     if not api_key:
         return []
     
-    # Endpoint generico soccer per evitare timeout ed errori HTTP
-    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
+    tutte = []
+    
+    # 1. Scarico generico soccer
+    url_gen = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
     try:
-        res = requests.get(url, timeout=8)
+        res = requests.get(url_gen, timeout=6)
         if res.status_code == 200:
-            return res.json()
+            tutte.extend(res.json())
     except Exception:
         pass
-    return []
 
-# --- GENERATORE/DERIVATORE COMPLETO DI TUTTI I MERCATI SCOMMESSE ---
+    # 2. Scarico specifico per i principali campionati europei (per trovare match fino a 2 settimane)
+    leghe = [
+        "soccer_italy_serie_a",
+        "soccer_epl",
+        "soccer_spain_la_liga",
+        "soccer_germany_bundesliga",
+        "soccer_uefa_champs_league"
+    ]
+    
+    for lega in leghe:
+        url_l = f"https://api.the-odds-api.com/v4/sports/{lega}/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
+        try:
+            r = requests.get(url_l, timeout=4)
+            if r.status_code == 200:
+                tutte.extend(r.json())
+        except Exception:
+            continue
+            
+    # Rimozione duplicati basata sull'id evento
+    visti = set()
+    risultato_unico = []
+    for m in tutte:
+        m_id = m.get('id')
+        if m_id and m_id not in visti:
+            visti.add(m_id)
+            risultato_unico.append(m)
+        elif not m_id:
+            risultato_unico.append(m)
+            
+    return risultato_unico
+
+# --- DERIVAZIONE COMPLETA ESITI SCOMMESSE ---
 def estrai_mercati_completi(match_data):
     opzioni = {}
     home_team = match_data.get('home_team')
@@ -107,7 +139,7 @@ def estrai_mercati_completi(match_data):
                             q_under25 = price
                             opzioni["Under 2.5"] = price
 
-    # DERIVAZIONE MATEMATICA PRECISA DOPPIA CHANCE (se 1X2 presenti)
+    # DERIVAZIONE DOPPIA CHANCE
     if q1 and qx:
         opzioni["Doppia Chance 1X"] = round(1 / ((1/q1) + (1/qx)), 2)
     if qx and q2:
@@ -115,7 +147,7 @@ def estrai_mercati_completi(match_data):
     if q1 and q2:
         opzioni["Doppia Chance 12"] = round(1 / ((1/q1) + (1/q2)), 2)
 
-    # DERIVAZIONE GOAL / NO GOAL DALL'UNDER/OVER 2.5
+    # DERIVAZIONE GOAL / NO GOAL
     if q_over25 and q_under25:
         opzioni["Goal"] = round(max(1.25, q_over25 * 0.93), 2)
         opzioni["No Goal"] = round(max(1.25, q_under25 * 0.95), 2)
@@ -129,7 +161,6 @@ def calcola_probabilita_e_consiglio(opzioni_esiti):
     if not opzioni_esiti:
         return None, {}
     
-    # Calcolo probabilità reali per 1X2 e principali
     tot = sum([1.0/v for k, v in opzioni_esiti.items() if k in ["Esito 1", "Esito X", "Esito 2"]])
     if tot == 0:
         tot = sum([1.0/v for v in opzioni_esiti.values()])
@@ -221,7 +252,7 @@ with tab_input:
                         st.success("Partita aggiunta!")
                         st.rerun()
         else:
-            st.warning("Nessuna partita trovata con questo nome nel palinsesto live.")
+            st.warning("Nessuna partita trovata con questo nome nel palinsesto esteso.")
     else:
         st.info("💡 Inserisci 'The Odds API Key' valida nel menu laterale per le quote in tempo reale.")
             
@@ -341,7 +372,7 @@ with tab_auto:
                     st.write(f"- **{item['match']}** | {item['esito']} @ **{item['quota']}** ({tipo})")
 
 # ----------------------------------------------------
-# TAB 4: ANALISI IA
+# TAB 4: ANALISI IA (FIXED MODEL ENDPOINT)
 # ----------------------------------------------------
 with tab_ai:
     st.subheader("Analisi Statistica IA")
@@ -354,13 +385,15 @@ with tab_ai:
             try:
                 client = genai.Client(api_key=gemini_key)
                 elenco = "\n".join([f"- {p['match']} | {p['esito']} @ {p['quota']} ({'BASE' if p['base'] else 'VAR'})" for p in st.session_state.partite])
+                
+                # Utilizziamo gemini-2.5-flash pienamente compatibile con la nuova SDK
                 res = client.models.generate_content(
-                    model='gemini-1.5-flash', 
-                    contents=f"Analizza questo sistema scommesse:\n{elenco}"
+                    model='gemini-2.5-flash', 
+                    contents=f"Analizza con approccio matematico e critico questo sistema di scommesse:\n{elenco}"
                 )
                 st.markdown(res.text)
             except Exception as e:
-                st.error(f"Errore Gemini: {e}")
+                st.error(f"Errore durante l'elaborazione IA: {e}")
 
 # ----------------------------------------------------
 # TAB 5: MATRICE E CALCOLO SISTEMA
