@@ -7,7 +7,7 @@ from google import genai
 
 # --- CONFIGURAZIONE PAGINA MOBILE ---
 st.set_page_config(
-    page_title="Football System Analyst AI",
+    page_title="Football System Analyst AI Pro",
     page_icon="⚽",
     layout="centered",
     initial_sidebar_state="collapsed"
@@ -31,6 +31,15 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 12px;
     }
+    .warning-box {
+        background-color: #fef7e0;
+        border-left: 5px solid #b06000;
+        padding: 12px;
+        border-radius: 6px;
+        color: #b06000;
+        font-weight: bold;
+        margin-bottom: 12px;
+    }
     .stats-card {
         background-color: #f8f9fa;
         border: 1px solid #e9ecef;
@@ -42,7 +51,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚽ System Analyst AI — Pro")
-st.caption("Piattaforma avanzata basata su modelli statistici, analisi del valore e IA.")
+st.caption("Piattaforma analitica avanzata per multiple, sistemi e analisi fattori esterni.")
 
 # --- GESTIONE CHIAVI API ---
 with st.sidebar:
@@ -68,8 +77,6 @@ def recupera_palinsesto_stabile(api_key):
         return []
     
     tutte = []
-    
-    # 1. Scarico generico soccer
     url_gen = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
     try:
         res = requests.get(url_gen, timeout=6)
@@ -78,13 +85,13 @@ def recupera_palinsesto_stabile(api_key):
     except Exception:
         pass
 
-    # 2. Scarico specifico per i principali campionati europei
     leghe = [
         "soccer_italy_serie_a",
         "soccer_epl",
         "soccer_spain_la_liga",
         "soccer_germany_bundesliga",
-        "soccer_uefa_champs_league"
+        "soccer_uefa_champs_league",
+        "soccer_intl_specials"
     ]
     
     for lega in leghe:
@@ -182,7 +189,6 @@ def estrai_mercati_completi(match_data):
                             q_under25 = price
                             opzioni["Under 2.5"] = price
 
-    # Derivazione Matematica con rimozione aggio bookmaker
     if q1 and qx:
         opzioni["Doppia Chance 1X"] = round(1 / ((1/q1) + (1/qx)), 2)
     if qx and q2:
@@ -193,67 +199,74 @@ def estrai_mercati_completi(match_data):
     if q_over25 and q_under25:
         opzioni["Goal"] = round(max(1.30, q_over25 * 0.92), 2)
         opzioni["No Goal"] = round(max(1.30, q_under25 * 0.94), 2)
-    elif q1 and q2:
-        opzioni["Goal"] = round(max(1.35, min(q1, q2) * 0.85), 2)
-        opzioni["No Goal"] = round(max(1.35, max(q1, q2) * 0.75), 2)
+        # Stima Over 3.5 dove presente o derivato
+        opzioni["Over 3.5"] = round(max(1.80, q_over25 * 1.55), 2)
 
     return opzioni
 
-def analizza_valore_e_probabilita(opzioni_esiti):
-    """
-    Calcola la probabilità reale de-aggiata e seleziona la scommessa a maggior valore (Value Bet).
-    """
+def analizza_valore_e_probabilita(opzioni_esiti, tipo_mercato="Esiti Misti"):
     if not opzioni_esiti:
         return None, {}
     
-    # 1. Calcolo lavagna e rimozione aggio sui mercati principali
     mercati_1x2 = {k: v for k, v in opzioni_esiti.items() if k in ["Esito 1", "Esito X", "Esito 2"]}
     if mercati_1x2:
         lavagna = sum([1.0 / v for v in mercati_1x2.values()])
         prob_reali = {k: round(((1.0 / v) / lavagna) * 100, 1) for k, v in opzioni_esiti.items()}
     else:
         lavagna = sum([1.0 / v for v in opzioni_esiti.values()])
-        prob_reali = {k: round(((1.0 / v) / lavagna) * 100, 1) for k, v in opzioni_esiti.values()}
+        prob_reali = {k: round(((1.0 / v) / lavagna) * 100, 1) for k, v in opzioni_esiti.items()}
 
-    # 2. Selezione intelligente dell'esito più sicuro vs a maggior valore
-    # Privilegiamo Doppie Chance o Over se le probabilità 1X2 sono troppo bilanciate (partita trappola)
-    p_1 = prob_reali.get("Esito 1", 0)
-    p_2 = prob_reali.get("Esito 2", 0)
-    
-    if abs(p_1 - p_2) < 15 and "Doppia Chance 1X" in opzioni_esiti:
-        # Partita equilibrata: meglio evitare 1X2 secco e scegliere la copertura o i gol
-        if opzioni_esiti.get("Goal", 0) >= 1.60 and prob_reali.get("Goal", 0) > 52:
-            scelta = "Goal"
-        elif p_1 >= p_2:
-            scelta = "Doppia Chance 1X"
+    if tipo_mercato == "Solo Esiti Fissi (1, X, 2)":
+        filtrati = {k: v for k, v in prob_reali.items() if k in ["Esito 1", "Esito X", "Esito 2"]}
+        if filtrati:
+            scelta = max(filtrati, key=filtrati.get)
         else:
-            scelta = "Doppia Chance X2"
+            scelta = max(prob_reali, key=prob_reali.get)
+    elif tipo_mercato == "Solo Over 2.5 / Over 3.5":
+        filtrati = {k: v for k, v in prob_reali.items() if k in ["Over 2.5", "Over 3.5"]}
+        if filtrati:
+            scelta = max(filtrati, key=filtrati.get)
+        else:
+            scelta = "Over 2.5" if "Over 2.5" in opzioni_esiti else max(prob_reali, key=prob_reali.get)
     else:
-        scelta = max(prob_reali, key=prob_reali.get)
+        p_1 = prob_reali.get("Esito 1", 0)
+        p_2 = prob_reali.get("Esito 2", 0)
+        if abs(p_1 - p_2) < 15 and "Doppia Chance 1X" in opzioni_esiti:
+            if opzioni_esiti.get("Goal", 0) >= 1.60 and prob_reali.get("Goal", 0) > 52:
+                scelta = "Goal"
+            elif p_1 >= p_2:
+                scelta = "Doppia Chance 1X"
+            else:
+                scelta = "Doppia Chance X2"
+        else:
+            scelta = max(prob_reali, key=prob_reali.get)
 
     return scelta, prob_reali
 
-def seleziona_eventi_multipla_avanzata(palinsesto, n_eventi):
+def seleziona_eventi_multipla_avanzata(palinsesto, n_eventi, tipo_mercato, forza_generazione):
     candidati = []
     for m in palinsesto:
         match_str = f"{m['home_team']} vs {m['away_team']}"
         opzioni = estrai_mercati_completi(m)
         if opzioni:
-            esito_opt, prob_dict = analizza_valore_e_probabilita(opzioni)
-            quota_opt = opzioni[esito_opt]
-            prob_opt = prob_dict.get(esito_opt, 0)
+            esito_opt, prob_dict = analizza_valore_e_probabilita(opzioni, tipo_mercato)
+            if esito_opt in opzioni:
+                quota_opt = opzioni[esito_opt]
+                prob_opt = prob_dict.get(esito_opt, 0)
 
-            # Filtro severo Multipla: Quota tra 1.35 e 1.75 con probabilità reale > 58%
-            if 1.35 <= quota_opt <= 1.75 and prob_opt >= 58.0:
-                candidati.append({
-                    "match": match_str,
-                    "esito": esito_opt,
-                    "quota": quota_opt,
-                    "prob": prob_opt
-                })
+                # Filtro strict
+                valido_strict = (1.35 <= quota_opt <= 1.85 and prob_opt >= 52.0)
+                
+                if valido_strict or forza_generazione:
+                    candidati.append({
+                        "match": match_str,
+                        "esito": esito_opt,
+                        "quota": quota_opt,
+                        "prob": prob_opt,
+                        "is_low_value": not valido_strict
+                    })
 
     candidati.sort(key=lambda x: x['prob'], reverse=True)
-    
     usati = set()
     risultato = []
     for c in candidati:
@@ -264,24 +277,27 @@ def seleziona_eventi_multipla_avanzata(palinsesto, n_eventi):
                 break
     return risultato
 
-def seleziona_eventi_sistema_avanzato(palinsesto, n_eventi):
+def seleziona_eventi_sistema_avanzato(palinsesto, n_eventi, tipo_mercato, forza_generazione):
     candidati = []
     for m in palinsesto:
         match_str = f"{m['home_team']} vs {m['away_team']}"
         opzioni = estrai_mercati_completi(m)
         if opzioni:
-            esito_opt, prob_dict = analizza_valore_e_probabilita(opzioni)
-            quota_opt = opzioni[esito_opt]
-            prob_opt = prob_dict.get(esito_opt, 0)
+            esito_opt, prob_dict = analizza_valore_e_probabilita(opzioni, tipo_mercato)
+            if esito_opt in opzioni:
+                quota_opt = opzioni[esito_opt]
+                prob_opt = prob_dict.get(esito_opt, 0)
 
-            # Per il sistema cerchiamo valore reale: quote tra 1.60 e 2.30 ma con probabilità solide (> 45%)
-            if 1.60 <= quota_opt <= 2.30 and prob_opt >= 45.0:
-                candidati.append({
-                    "match": match_str,
-                    "esito": esito_opt,
-                    "quota": quota_opt,
-                    "prob": prob_opt
-                })
+                valido_strict = (1.55 <= quota_opt <= 2.45 and prob_opt >= 42.0)
+
+                if valido_strict or forza_generazione:
+                    candidati.append({
+                        "match": match_str,
+                        "esito": esito_opt,
+                        "quota": quota_opt,
+                        "prob": prob_opt,
+                        "is_low_value": not valido_strict
+                    })
 
     random.shuffle(candidati)
     usati = set()
@@ -293,7 +309,6 @@ def seleziona_eventi_sistema_avanzato(palinsesto, n_eventi):
             if len(risultato_raw) == n_eventi:
                 break
 
-    # Assegnazione BASI (le 2 partite a probabilità più alta) e VARIABILI
     risultato_raw.sort(key=lambda x: x['prob'], reverse=True)
     risultato_finale = []
     for idx, item in enumerate(risultato_raw):
@@ -395,7 +410,7 @@ with tab_input:
             st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: MULTIPLA PRO (FILTRO SEVERO)
+# TAB 2: MULTIPLA PRO
 # ----------------------------------------------------
 with tab_multipla:
     st.subheader("🎯 Generazione Multipla Ad Alta Probabilità")
@@ -407,22 +422,37 @@ with tab_multipla:
         key="time_mult"
     )
     
-    n_eventi_mult = st.slider("Numero di eventi nella Multipla", min_value=2, max_value=6, value=3)
+    tipo_mercato_mult = st.selectbox(
+        "⚽ Tipologia Scommessa Multipla:",
+        ["Esiti Misti", "Solo Over 2.5 / Over 3.5", "Solo Esiti Fissi (1, X, 2)"],
+        index=0,
+        key="mercato_mult"
+    )
+    
+    forza_mult = st.checkbox("⚠️ Forza generazione anche con partite a quota/valore basso", value=True, key="forza_mult")
+    n_eventi_mult = st.slider("Numero di eventi nella Multipla", min_value=2, max_value=8, value=3)
     importo_scommessa = st.number_input("Importo della giocata (€)", min_value=1.0, value=10.0, step=1.0)
     
     if st.button("🚀 Genera Multipla Analitica Ora"):
         if not odds_api_key:
             st.error("Inserisci la chiave The Odds API.")
         else:
-            with st.spinner("Analisi statistica delle quote in corso..."):
+            with st.spinner("Analisi approfondita e filtraggio palinsesto..."):
                 palinsesto_realtime = recupera_palinsesto_stabile(odds_api_key)
                 palinsesto_filtrato = filtra_per_orizzonte_temporale(palinsesto_realtime, orizzonte_mult)
-                multipla_finale = seleziona_eventi_multipla_avanzata(palinsesto_filtrato, n_eventi_mult)
+                multipla_finale = seleziona_eventi_multipla_avanzata(palinsesto_filtrato, n_eventi_mult, tipo_mercato_mult, forza_mult)
             
-            if len(multipla_finale) < n_eventi_mult:
-                st.warning(f"Trovati solo {len(multipla_finale)} eventi che rispettano i rigidi criteri di stabilità e valore statistico nell'intervallo selezionato.")
-            
-            if multipla_finale:
+            if not multipla_finale:
+                st.warning("Nessun evento idoneo trovato nell'intervallo e con la tipologia selezionata.")
+            else:
+                has_low_val = any(ev.get('is_low_value', False) for ev in multipla_finale)
+                if has_low_val:
+                    st.markdown("""
+                    <div class="warning-box">
+                        ⚠️ <b>AVVISO DI RISCHIO:</b> Alcune o tutte le partite selezionate presentano quote basse o un valore statistico limitato causa palinsesto ristretto.
+                    </div>
+                    """, unsafe_allow_html=True)
+
                 quota_totale = 1.0
                 for ev in multipla_finale:
                     quota_totale *= ev['quota']
@@ -430,9 +460,10 @@ with tab_multipla:
                 
                 st.markdown("### 📋 Multipla Selezionata:")
                 for i, ev in enumerate(multipla_finale, 1):
+                    tag_risk = " ⚠️ *(Quota/Valore Basso)*" if ev.get('is_low_value') else ""
                     st.markdown(f"""
                     <div class="stats-card">
-                        <b>{i}. {ev['match']}</b><br>
+                        <b>{i}. {ev['match']}</b>{tag_risk}<br>
                         Esito: <b>{ev['esito']}</b> @ <b>{ev['quota']}</b> | Probabilità Reale: <b>{ev['prob']}%</b>
                     </div>
                     """, unsafe_allow_html=True)
@@ -442,7 +473,7 @@ with tab_multipla:
                 st.metric("Vincita Potenziale", f"{vincita_potenziale:.2f} €")
 
 # ----------------------------------------------------
-# TAB 3: GENERATORE SISTEMI VALUE BET
+# TAB 3: GENERATORE SISTEMI
 # ----------------------------------------------------
 with tab_auto:
     st.subheader("⚡ Generazione Sistema Value Bet (Con Copertura)")
@@ -454,6 +485,14 @@ with tab_auto:
         key="time_sis"
     )
     
+    tipo_mercato_sis = st.selectbox(
+        "⚽ Tipologia Scommessa Sistema:",
+        ["Esiti Misti", "Solo Over 2.5 / Over 3.5", "Solo Esiti Fissi (1, X, 2)"],
+        index=0,
+        key="mercato_sis"
+    )
+    
+    forza_sis = st.checkbox("⚠️ Forza generazione anche con partite a quota/valore basso", value=True, key="forza_sis")
     num_eventi = st.slider("Numero di eventi da generare", min_value=4, max_value=8, value=5)
     
     if st.button("⚡ Genera Sistema Value Bet Ora"):
@@ -463,11 +502,19 @@ with tab_auto:
             with st.spinner("Calcolo Value Bets e bilanciamento errori..."):
                 palinsesto_realtime = recupera_palinsesto_stabile(odds_api_key)
                 palinsesto_filtrato = filtra_per_orizzonte_temporale(palinsesto_realtime, orizzonte_sis)
-                sistema_generato = seleziona_eventi_sistema_avanzato(palinsesto_filtrato, num_eventi)
+                sistema_generato = seleziona_eventi_sistema_avanzato(palinsesto_filtrato, num_eventi, tipo_mercato_sis, forza_sis)
             
             if not sistema_generato:
-                st.error("Nessun evento ad alto valore (Value Bet) individuato nell'intervallo temporale scelto.")
+                st.error("Nessun evento individuato nell'intervallo e con la tipologia selezionata.")
             else:
+                has_low_val = any(ev.get('is_low_value', False) for ev in sistema_generato)
+                if has_low_val:
+                    st.markdown("""
+                    <div class="warning-box">
+                        ⚠️ <b>AVVISO DI RISCHIO:</b> Il sistema include partite filtrate con quote o margine di valore ridotto.
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
                 st.session_state.partite = sistema_generato
                 st.success("✅ Sistema Generato e caricato nel Schedario!")
                 for item in st.session_state.partite:
@@ -475,11 +522,11 @@ with tab_auto:
                     st.write(f"- **{item['match']}** | {item['esito']} @ **{item['quota']}** ({tipo})")
 
 # ----------------------------------------------------
-# TAB 4: ANALISI IA AVANZATA (GEMINI 2.5)
+# TAB 4: ANALISI IA AVANZATA (CORRETTA)
 # ----------------------------------------------------
 with tab_ai:
     st.subheader("🤖 Analisi Critica & Audit IA")
-    st.caption("Valutazione dei rischi e dei fattori esterni (infortuni, forma, motivazioni).")
+    st.caption("Valutazione dei rischi e dei fattori esterni (infortuni, forma, motivazioni, turnover).")
     
     if st.button("🚀 Avvia Audit Analitico IA"):
         if not gemini_key:
@@ -492,19 +539,23 @@ with tab_ai:
                 elenco = "\n".join([f"- {p['match']} | Esito: {p['esito']} @ {p['quota']} ({'BASE (Fissa)' if p['base'] else 'VARIABILE'})" for p in st.session_state.partite])
                 
                 prompt_rigido = f"""
-                Sei un analista quantitativo di scommesse sportive professionale ed estremamente severo.
-                Analizza questo sistema/multipla:
+                Sei un analista quantitativo e tattico di scommesse sportive professionale ed estremamente severo.
+                Analizza in modo approfondito e senza accondiscendenza queste selezioni:
                 {elenco}
 
-                Fornisci un report strutturato con:
-                1. **Punti Critici e Partite Trappola**: Identifica quali eventi sono estremamente rischiosi e perché.
-                2. **Consistenza Statistica**: Valuta se le quote rispecchiano il valore o se sono trappole dei bookmaker.
-                3. **Raccomandazione Finale**: Indica chiaramente quali partite eliminare o sostituire per aumentare l'aspettativa di vincita (Expected Value +EV).
-                
-                Sii schietto, realista e non condiscendente.
+                Svolgi una ricerca mentale approfondita incrociando i seguenti fattori chiave per ogni match:
+                1. **Stato di Forma recente e Rendimento Casa/Trasferta**.
+                2. **Impegni ravvicinati, impegni di Coppe/Nazionali e probabile Turnover**.
+                3. **Infortuni chiave, squalifiche e forze complessive delle squadre**.
+                4. **Condizioni o fattori esterni che incidono sulla partita**.
+
+                Fornisci un report chiaro suddiviso in:
+                - **Analisi Singole Partite & Insidie Nascoste**: Evidenzia eventuali trappole nelle quote.
+                - **Valutazione del Rischio Globale**: Rispondi chiaramente se la giocata ha un valore atteso positivo (+EV).
+                - **Verdetto Severo**: Indica quali eventi eliminare o sostituire.
                 """
                 
-                with st.spinner("Audit IA in corso con Gemini 2.5..."):
+                with st.spinner("Audit approfondito IA con Gemini 2.5..."):
                     res = client.models.generate_content(
                         model='gemini-2.5-flash', 
                         contents=prompt_rigido
