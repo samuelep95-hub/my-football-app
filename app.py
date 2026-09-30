@@ -51,7 +51,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚽ System Analyst AI — Pro")
-st.caption("Piattaforma analitica avanzata per multiple, sistemi e analisi fattori esterni.")
+st.caption("Piattaforma analitica avanzata per multiple, sistemi e target di quota personalizzato.")
 
 # --- GESTIONE CHIAVI API ---
 with st.sidebar:
@@ -199,7 +199,6 @@ def estrai_mercati_completi(match_data):
     if q_over25 and q_under25:
         opzioni["Goal"] = round(max(1.30, q_over25 * 0.92), 2)
         opzioni["No Goal"] = round(max(1.30, q_under25 * 0.94), 2)
-        # Stima Over 3.5 dove presente o derivato
         opzioni["Over 3.5"] = round(max(1.80, q_over25 * 1.55), 2)
 
     return opzioni
@@ -218,16 +217,10 @@ def analizza_valore_e_probabilita(opzioni_esiti, tipo_mercato="Esiti Misti"):
 
     if tipo_mercato == "Solo Esiti Fissi (1, X, 2)":
         filtrati = {k: v for k, v in prob_reali.items() if k in ["Esito 1", "Esito X", "Esito 2"]}
-        if filtrati:
-            scelta = max(filtrati, key=filtrati.get)
-        else:
-            scelta = max(prob_reali, key=prob_reali.get)
+        scelta = max(filtrati, key=filtrati.get) if filtrati else max(prob_reali, key=prob_reali.get)
     elif tipo_mercato == "Solo Over 2.5 / Over 3.5":
         filtrati = {k: v for k, v in prob_reali.items() if k in ["Over 2.5", "Over 3.5"]}
-        if filtrati:
-            scelta = max(filtrati, key=filtrati.get)
-        else:
-            scelta = "Over 2.5" if "Over 2.5" in opzioni_esiti else max(prob_reali, key=prob_reali.get)
+        scelta = max(filtrati, key=filtrati.get) if filtrati else ("Over 2.5" if "Over 2.5" in opzioni_esiti else max(prob_reali, key=prob_reali.get))
     else:
         p_1 = prob_reali.get("Esito 1", 0)
         p_2 = prob_reali.get("Esito 2", 0)
@@ -243,7 +236,8 @@ def analizza_valore_e_probabilita(opzioni_esiti, tipo_mercato="Esiti Misti"):
 
     return scelta, prob_reali
 
-def seleziona_eventi_multipla_avanzata(palinsesto, n_eventi, tipo_mercato, forza_generazione):
+# --- SELEZIONE BASATA SU TARGET QUOTA TOTALE ---
+def genera_schedina_per_target_quota(palinsesto, target_quota, tipo_mercato, forza_generazione, modalita="multipla"):
     candidati = []
     for m in palinsesto:
         match_str = f"{m['home_team']} vs {m['away_team']}"
@@ -254,9 +248,7 @@ def seleziona_eventi_multipla_avanzata(palinsesto, n_eventi, tipo_mercato, forza
                 quota_opt = opzioni[esito_opt]
                 prob_opt = prob_dict.get(esito_opt, 0)
 
-                # Filtro strict
-                valido_strict = (1.35 <= quota_opt <= 1.85 and prob_opt >= 52.0)
-                
+                valido_strict = (1.25 <= quota_opt <= 2.50 and prob_opt >= 40.0)
                 if valido_strict or forza_generazione:
                     candidati.append({
                         "match": match_str,
@@ -266,56 +258,36 @@ def seleziona_eventi_multipla_avanzata(palinsesto, n_eventi, tipo_mercato, forza
                         "is_low_value": not valido_strict
                     })
 
+    if not candidati:
+        return [], 1.0
+
+    # Ordiniamo per probabilità/affidabilità
     candidati.sort(key=lambda x: x['prob'], reverse=True)
+    
     usati = set()
-    risultato = []
+    selezionati = []
+    quota_accumulata = 1.0
+    
+    # Costruzione dinamica per avvicinarsi alla quota target
     for c in candidati:
         if c['match'] not in usati:
             usati.add(c['match'])
-            risultato.append(c)
-            if len(risultato) == n_eventi:
+            selezionati.append(c)
+            quota_accumulata *= c['quota']
+            
+            # Se abbiamo raggiunto o superato di poco la quota target, ci fermiamo
+            if quota_accumulata >= target_quota * 0.90:
                 break
-    return risultato
-
-def seleziona_eventi_sistema_avanzato(palinsesto, n_eventi, tipo_mercato, forza_generazione):
-    candidati = []
-    for m in palinsesto:
-        match_str = f"{m['home_team']} vs {m['away_team']}"
-        opzioni = estrai_mercati_completi(m)
-        if opzioni:
-            esito_opt, prob_dict = analizza_valore_e_probabilita(opzioni, tipo_mercato)
-            if esito_opt in opzioni:
-                quota_opt = opzioni[esito_opt]
-                prob_opt = prob_dict.get(esito_opt, 0)
-
-                valido_strict = (1.55 <= quota_opt <= 2.45 and prob_opt >= 42.0)
-
-                if valido_strict or forza_generazione:
-                    candidati.append({
-                        "match": match_str,
-                        "esito": esito_opt,
-                        "quota": quota_opt,
-                        "prob": prob_opt,
-                        "is_low_value": not valido_strict
-                    })
-
-    random.shuffle(candidati)
-    usati = set()
-    risultato_raw = []
-    for c in candidati:
-        if c['match'] not in usati:
-            usati.add(c['match'])
-            risultato_raw.append(c)
-            if len(risultato_raw) == n_eventi:
+                
+            # Limite massimo di sicurezza eventi (max 10)
+            if len(selezionati) >= 10:
                 break
 
-    risultato_raw.sort(key=lambda x: x['prob'], reverse=True)
-    risultato_finale = []
-    for idx, item in enumerate(risultato_raw):
-        item['base'] = True if idx < 2 else False
-        risultato_finale.append(item)
+    if modalita == "sistema":
+        for idx, item in enumerate(selezionati):
+            item['base'] = True if idx < 2 else False
 
-    return risultato_finale
+    return selezionati, quota_accumulata
 
 # --- TABS NAVIGAZIONE ---
 tab_input, tab_multipla, tab_auto, tab_ai, tab_math = st.tabs([
@@ -410,10 +382,10 @@ with tab_input:
             st.rerun()
 
 # ----------------------------------------------------
-# TAB 2: MULTIPLA PRO
+# TAB 2: MULTIPLA PRO CON TARGET QUOTA
 # ----------------------------------------------------
 with tab_multipla:
-    st.subheader("🎯 Generazione Multipla Ad Alta Probabilità")
+    st.subheader("🎯 Multipla con Target Quota Personalizzato")
     
     orizzonte_mult = st.selectbox(
         "📅 Lasso di tempo match:",
@@ -429,36 +401,39 @@ with tab_multipla:
         key="mercato_mult"
     )
     
+    col_q1, col_q2 = st.columns(2)
+    with col_q1:
+        target_quota_mult = st.number_input("🎯 Quota Totale Target (da 3 a 100)", min_value=3.0, max_value=100.0, value=10.0, step=1.0)
+    with col_q2:
+        importo_mult = st.number_input("💶 Importo Giocata (€)", min_value=1.0, value=10.0, step=1.0)
+        
     forza_mult = st.checkbox("⚠️ Forza generazione anche con partite a quota/valore basso", value=True, key="forza_mult")
-    n_eventi_mult = st.slider("Numero di eventi nella Multipla", min_value=2, max_value=8, value=3)
-    importo_scommessa = st.number_input("Importo della giocata (€)", min_value=1.0, value=10.0, step=1.0)
     
-    if st.button("🚀 Genera Multipla Analitica Ora"):
+    if st.button("🚀 Genera Multipla per Quota Target"):
         if not odds_api_key:
             st.error("Inserisci la chiave The Odds API.")
         else:
-            with st.spinner("Analisi approfondita e filtraggio palinsesto..."):
+            with st.spinner("Ricerca ed elaborazione combinazioni per la quota target..."):
                 palinsesto_realtime = recupera_palinsesto_stabile(odds_api_key)
                 palinsesto_filtrato = filtra_per_orizzonte_temporale(palinsesto_realtime, orizzonte_mult)
-                multipla_finale = seleziona_eventi_multipla_avanzata(palinsesto_filtrato, n_eventi_mult, tipo_mercato_mult, forza_mult)
+                multipla_finale, quota_effettiva = genera_schedina_per_target_quota(
+                    palinsesto_filtrato, target_quota_mult, tipo_mercato_mult, forza_mult, modalita="multipla"
+                )
             
             if not multipla_finale:
-                st.warning("Nessun evento idoneo trovato nell'intervallo e con la tipologia selezionata.")
+                st.warning("Nessuna combinazione trovata per i criteri impostati.")
             else:
                 has_low_val = any(ev.get('is_low_value', False) for ev in multipla_finale)
-                if has_low_val:
+                if has_low_val or target_quota_mult >= 30.0:
                     st.markdown("""
                     <div class="warning-box">
-                        ⚠️ <b>AVVISO DI RISCHIO:</b> Alcune o tutte le partite selezionate presentano quote basse o un valore statistico limitato causa palinsesto ristretto.
+                        ⚠️ <b>AVVISO RISCHIO ELEVATO:</b> La quota target richiesta è alta o include partite a basso valore relativo. Giocare con prudenza.
                     </div>
                     """, unsafe_allow_html=True)
 
-                quota_totale = 1.0
-                for ev in multipla_finale:
-                    quota_totale *= ev['quota']
-                vincita_potenziale = quota_totale * importo_scommessa
+                vincita_potenziale = quota_effettiva * importo_mult
                 
-                st.markdown("### 📋 Multipla Selezionata:")
+                st.markdown(f"### 📋 Multipla Generata ({len(multipla_finale)} Eventi):")
                 for i, ev in enumerate(multipla_finale, 1):
                     tag_risk = " ⚠️ *(Quota/Valore Basso)*" if ev.get('is_low_value') else ""
                     st.markdown(f"""
@@ -469,14 +444,14 @@ with tab_multipla:
                     """, unsafe_allow_html=True)
                 
                 st.markdown("---")
-                st.metric("Quota Totale", f"{quota_totale:.2f}")
+                st.metric("Quota Totale Reale", f"{quota_effettiva:.2f}")
                 st.metric("Vincita Potenziale", f"{vincita_potenziale:.2f} €")
 
 # ----------------------------------------------------
-# TAB 3: GENERATORE SISTEMI
+# TAB 3: GENERATORE SISTEMI CON TARGET QUOTA
 # ----------------------------------------------------
 with tab_auto:
-    st.subheader("⚡ Generazione Sistema Value Bet (Con Copertura)")
+    st.subheader("⚡ Sistema Value Bet con Target Quota")
     
     orizzonte_sis = st.selectbox(
         "📅 Lasso di tempo match:",
@@ -492,37 +467,31 @@ with tab_auto:
         key="mercato_sis"
     )
     
+    target_quota_sis = st.number_input("🎯 Quota Totale Target Sistema (da 3 a 100)", min_value=3.0, max_value=100.0, value=15.0, step=1.0)
     forza_sis = st.checkbox("⚠️ Forza generazione anche con partite a quota/valore basso", value=True, key="forza_sis")
-    num_eventi = st.slider("Numero di eventi da generare", min_value=4, max_value=8, value=5)
     
-    if st.button("⚡ Genera Sistema Value Bet Ora"):
+    if st.button("⚡ Genera Sistema per Quota Target Ora"):
         if not odds_api_key:
             st.error("Inserisci la chiave The Odds API.")
         else:
-            with st.spinner("Calcolo Value Bets e bilanciamento errori..."):
+            with st.spinner("Calcolo combinazioni sistema e bilanciamento target..."):
                 palinsesto_realtime = recupera_palinsesto_stabile(odds_api_key)
                 palinsesto_filtrato = filtra_per_orizzonte_temporale(palinsesto_realtime, orizzonte_sis)
-                sistema_generato = seleziona_eventi_sistema_avanzato(palinsesto_filtrato, num_eventi, tipo_mercato_sis, forza_sis)
+                sistema_generato, quota_effettiva_sis = genera_schedina_per_target_quota(
+                    palinsesto_filtrato, target_quota_sis, tipo_mercato_sis, forza_sis, modalita="sistema"
+                )
             
             if not sistema_generato:
-                st.error("Nessun evento individuato nell'intervallo e con la tipologia selezionata.")
+                st.error("Nessun evento individuato per costruire il sistema richiesto.")
             else:
-                has_low_val = any(ev.get('is_low_value', False) for ev in sistema_generato)
-                if has_low_val:
-                    st.markdown("""
-                    <div class="warning-box">
-                        ⚠️ <b>AVVISO DI RISCHIO:</b> Il sistema include partite filtrate con quote o margine di valore ridotto.
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
                 st.session_state.partite = sistema_generato
-                st.success("✅ Sistema Generato e caricato nel Schedario!")
+                st.success(f"✅ Sistema Generato ({len(sistema_generato)} eventi) e caricato nel Schedario! Quota teorica fisse+var: {quota_effettiva_sis:.2f}")
                 for item in st.session_state.partite:
                     tipo = "📌 BASE" if item['base'] else "🔄 VARIABILE"
                     st.write(f"- **{item['match']}** | {item['esito']} @ **{item['quota']}** ({tipo})")
 
 # ----------------------------------------------------
-# TAB 4: ANALISI IA AVANZATA (CORRETTA)
+# TAB 4: ANALISI IA AVANZATA (GEMINI 2.5)
 # ----------------------------------------------------
 with tab_ai:
     st.subheader("🤖 Analisi Critica & Audit IA")
