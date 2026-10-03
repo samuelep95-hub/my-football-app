@@ -51,7 +51,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚽ System Analyst AI — Pro")
-st.caption("Piattaforma analitica avanzata per multiple, sistemi e target di quota personalizzato.")
+st.caption("Piattaforma analitica avanzata con supporto Serie B, Serie C / Lega Pro e leghe minori europee.")
 
 # --- GESTIONE CHIAVI API ---
 with st.sidebar:
@@ -70,13 +70,15 @@ with st.sidebar:
 if "partite" not in st.session_state:
     st.session_state.partite = []
 
-# --- RECUPERO PALINSESTO ESTESO ---
+# --- RECUPERO PALINSESTO ESTESO CON LEGHE MINORI ED ITALIANE ---
 @st.cache_data(ttl=300)
 def recupera_palinsesto_stabile(api_key):
     if not api_key:
         return []
     
     tutte = []
+    
+    # 1. Chiamata generica per catturare eventi generici
     url_gen = f"https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
     try:
         res = requests.get(url_gen, timeout=6)
@@ -85,19 +87,38 @@ def recupera_palinsesto_stabile(api_key):
     except Exception:
         pass
 
-    leghe = [
+    # 2. Elenco completo comprendente Serie B, Serie C, League One, League Two ecc.
+    leghe_estese = [
+        # Italia
         "soccer_italy_serie_a",
+        "soccer_italy_serie_b",
+        "soccer_italy_serie_c",
+        # Inghilterra
         "soccer_epl",
+        "soccer_efl_champ",
+        "soccer_england_league1",
+        "soccer_england_league2",
+        "soccer_england_national_league",
+        # Spagna
         "soccer_spain_la_liga",
+        "soccer_spain_segunda_division",
+        # Germania
         "soccer_germany_bundesliga",
+        "soccer_germany_bundesliga2",
+        # Francia
+        "soccer_france_ligue_1",
+        "soccer_france_ligue_2",
+        # Coppe e Nazionali
         "soccer_uefa_champs_league",
-        "soccer_intl_specials"
+        "soccer_uefa_europa_league",
+        "soccer_intl_specials",
+        "soccer_fifa_world_cup"
     ]
     
-    for lega in leghe:
+    for lega in leghe_estese:
         url_l = f"https://api.the-odds-api.com/v4/sports/{lega}/odds/?apiKey={api_key}&regions=eu&markets=h2h,totals"
         try:
-            r = requests.get(url_l, timeout=4)
+            r = requests.get(url_l, timeout=3)
             if r.status_code == 200:
                 tutte.extend(r.json())
         except Exception:
@@ -236,7 +257,7 @@ def analizza_valore_e_probabilita(opzioni_esiti, tipo_mercato="Esiti Misti"):
 
     return scelta, prob_reali
 
-# --- SELEZIONE BASATA SU TARGET QUOTA TOTALE ---
+# --- SELEZIONE DINAMICA PER TARGET QUOTA TOTALE ---
 def genera_schedina_per_target_quota(palinsesto, target_quota, tipo_mercato, forza_generazione, modalita="multipla"):
     candidati = []
     for m in palinsesto:
@@ -261,26 +282,24 @@ def genera_schedina_per_target_quota(palinsesto, target_quota, tipo_mercato, for
     if not candidati:
         return [], 1.0
 
-    # Ordiniamo per probabilità/affidabilità
+    # Ordiniamo per valore di probabilità
     candidati.sort(key=lambda x: x['prob'], reverse=True)
     
     usati = set()
     selezionati = []
     quota_accumulata = 1.0
     
-    # Costruzione dinamica per avvicinarsi alla quota target
+    # Continua ad aggiungere finché non raggiunge la quota target
     for c in candidati:
         if c['match'] not in usati:
             usati.add(c['match'])
             selezionati.append(c)
             quota_accumulata *= c['quota']
             
-            # Se abbiamo raggiunto o superato di poco la quota target, ci fermiamo
-            if quota_accumulata >= target_quota * 0.90:
+            if quota_accumulata >= target_quota * 0.95:
                 break
                 
-            # Limite massimo di sicurezza eventi (max 10)
-            if len(selezionati) >= 10:
+            if len(selezionati) >= 15:
                 break
 
     if modalita == "sistema":
@@ -303,7 +322,7 @@ with tab_input:
     palinsesto = recupera_palinsesto_stabile(odds_api_key)
     
     if odds_api_key and palinsesto:
-        search_query = st.text_input("🔍 Cerca squadra o partita (es. Lecce, Inter, Real):")
+        search_query = st.text_input("🔍 Cerca squadra o partita (es. Lecce, Catania, Wrexham, Real):")
         
         elenco_partite_totale = list(dict.fromkeys([f"{m['home_team']} vs {m['away_team']}" for m in palinsesto]))
         
@@ -390,7 +409,7 @@ with tab_multipla:
     orizzonte_mult = st.selectbox(
         "📅 Lasso di tempo match:",
         ["Solo oggi", "Oggi e domani", "Entro 3 giorni", "Lungo termine (entro 12-14 giorni)"],
-        index=1,
+        index=0,
         key="time_mult"
     )
     
@@ -403,9 +422,9 @@ with tab_multipla:
     
     col_q1, col_q2 = st.columns(2)
     with col_q1:
-        target_quota_mult = st.number_input("🎯 Quota Totale Target (da 3 a 100)", min_value=3.0, max_value=100.0, value=10.0, step=1.0)
+        target_quota_mult = st.number_input("🎯 Quota Totale Target (da 3 a 100)", min_value=3.0, max_value=100.0, value=30.0, step=1.0)
     with col_q2:
-        importo_mult = st.number_input("💶 Importo Giocata (€)", min_value=1.0, value=10.0, step=1.0)
+        importo_mult = st.number_input("💶 Importo Giocata (€)", min_value=1.0, value=3.0, step=1.0)
         
     forza_mult = st.checkbox("⚠️ Forza generazione anche con partite a quota/valore basso", value=True, key="forza_mult")
     
@@ -413,7 +432,7 @@ with tab_multipla:
         if not odds_api_key:
             st.error("Inserisci la chiave The Odds API.")
         else:
-            with st.spinner("Ricerca ed elaborazione combinazioni per la quota target..."):
+            with st.spinner("Ricerca nel palinsesto esteso (Serie A, B, C, League One, ecc.)..."):
                 palinsesto_realtime = recupera_palinsesto_stabile(odds_api_key)
                 palinsesto_filtrato = filtra_per_orizzonte_temporale(palinsesto_realtime, orizzonte_mult)
                 multipla_finale, quota_effettiva = genera_schedina_per_target_quota(
@@ -427,7 +446,7 @@ with tab_multipla:
                 if has_low_val or target_quota_mult >= 30.0:
                     st.markdown("""
                     <div class="warning-box">
-                        ⚠️ <b>AVVISO RISCHIO ELEVATO:</b> La quota target richiesta è alta o include partite a basso valore relativo. Giocare con prudenza.
+                        ⚠️ <b>AVVISO RISCHIO ELEVATO:</b> Quota target elevata. Giocare con prudenza.
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -456,7 +475,7 @@ with tab_auto:
     orizzonte_sis = st.selectbox(
         "📅 Lasso di tempo match:",
         ["Solo oggi", "Oggi e domani", "Entro 3 giorni", "Lungo termine (entro 12-14 giorni)"],
-        index=2,
+        index=0,
         key="time_sis"
     )
     
@@ -467,14 +486,14 @@ with tab_auto:
         key="mercato_sis"
     )
     
-    target_quota_sis = st.number_input("🎯 Quota Totale Target Sistema (da 3 a 100)", min_value=3.0, max_value=100.0, value=15.0, step=1.0)
+    target_quota_sis = st.number_input("🎯 Quota Totale Target Sistema (da 3 a 100)", min_value=3.0, max_value=100.0, value=30.0, step=1.0)
     forza_sis = st.checkbox("⚠️ Forza generazione anche con partite a quota/valore basso", value=True, key="forza_sis")
     
     if st.button("⚡ Genera Sistema per Quota Target Ora"):
         if not odds_api_key:
             st.error("Inserisci la chiave The Odds API.")
         else:
-            with st.spinner("Calcolo combinazioni sistema e bilanciamento target..."):
+            with st.spinner("Calcolo combinazioni su palinsesto esteso..."):
                 palinsesto_realtime = recupera_palinsesto_stabile(odds_api_key)
                 palinsesto_filtrato = filtra_per_orizzonte_temporale(palinsesto_realtime, orizzonte_sis)
                 sistema_generato, quota_effettiva_sis = genera_schedina_per_target_quota(
@@ -485,13 +504,13 @@ with tab_auto:
                 st.error("Nessun evento individuato per costruire il sistema richiesto.")
             else:
                 st.session_state.partite = sistema_generato
-                st.success(f"✅ Sistema Generato ({len(sistema_generato)} eventi) e caricato nel Schedario! Quota teorica fisse+var: {quota_effettiva_sis:.2f}")
+                st.success(f"✅ Sistema Generato ({len(sistema_generato)} eventi) e caricato nel Schedario! Quota accumulata: {quota_effettiva_sis:.2f}")
                 for item in st.session_state.partite:
                     tipo = "📌 BASE" if item['base'] else "🔄 VARIABILE"
                     st.write(f"- **{item['match']}** | {item['esito']} @ **{item['quota']}** ({tipo})")
 
 # ----------------------------------------------------
-# TAB 4: ANALISI IA AVANZATA (GEMINI 2.5)
+# TAB 4: ANALISI IA AVANZATA
 # ----------------------------------------------------
 with tab_ai:
     st.subheader("🤖 Analisi Critica & Audit IA")
